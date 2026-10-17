@@ -21,7 +21,10 @@ jobs:
 
       - name: Install tools
         run: npm install
-
+      - name: Install file plugins
+        run: |
+          V=$(node -p "require('@capacitor/core/package.json').version.split('.')[0]")
+          npm install @capacitor/filesystem@$V @capacitor/share@$V
       - name: Prepare web files
         run: |
           mkdir -p www
