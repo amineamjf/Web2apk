@@ -27,7 +27,10 @@ jobs:
           mkdir -p www
           cp -f index.html sw.js manifest.json icon-192.png icon-512.png www/
           if [ -f sidikacem-map.json ]; then cp -f sidikacem-map.json www/; fi
-
+      - name: Add Android bridge
+        run: |
+          cp -f android-bridge.js www/
+          sed -i '0,/<\/head>/s|</head>|<script src="./android-bridge.js"></script></head>|' www/index.html
       - name: Create Android project
         run: npx cap add android
 
