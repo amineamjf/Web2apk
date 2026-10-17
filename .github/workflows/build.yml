@@ -3,8 +3,6 @@ name: Build APK
 on:
   workflow_dispatch:
   push:
-    paths:
-      - 'www/**'
 
 jobs:
   build:
@@ -24,8 +22,20 @@ jobs:
       - name: Install tools
         run: npm install
 
+      - name: Prepare web files
+        run: |
+          mkdir -p www
+          cp -f index.html sw.js manifest.json icon-192.png icon-512.png www/
+          if [ -f sidikacem-map.json ]; then cp -f sidikacem-map.json www/; fi
+
       - name: Create Android project
         run: npx cap add android
+
+      - name: Add permissions
+        run: |
+          F=android/app/src/main/AndroidManifest.xml
+          sed -i 's#</manifest>#    <uses-permission android:name="android.permission.CAMERA" />\n    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />\n    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />\n    <uses-feature android:name="android.hardware.camera" android:required="false" />\n</manifest>#' $F
+          cat $F
 
       - name: Copy web files
         run: npx cap sync android
@@ -34,10 +44,4 @@ jobs:
         run: |
           cd android
           chmod +x gradlew
-          ./gradlew assembleDebug
-
-      - name: Save APK
-        uses: actions/upload-artifact@v4
-        with:
-          name: app-debug
-          path: android/app/build/outputs/apk/debug/app-debug.apk
+          ./gradl
