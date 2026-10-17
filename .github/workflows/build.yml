@@ -36,7 +36,12 @@ jobs:
           F=android/app/src/main/AndroidManifest.xml
           sed -i 's#</manifest>#    <uses-permission android:name="android.permission.CAMERA" />\n    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />\n    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />\n    <uses-feature android:name="android.hardware.camera" android:required="false" />\n</manifest>#' $F
           cat $F
-
+      - name: Add extra permissions
+        run: |
+          F=android/app/src/main/AndroidManifest.xml
+          for P in INTERNET CAMERA ACCESS_FINE_LOCATION ACCESS_COARSE_LOCATION; do
+            grep -q "android.permission.$P\"" $F || sed -i "s#</manifest>#    <uses-permission android:name=\"android.permission.$P\" />\n</manifest>#" $F
+          done
       - name: Copy web files
         run: npx cap sync android
 
