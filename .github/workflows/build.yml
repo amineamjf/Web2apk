@@ -1,8 +1,9 @@
 name: Build APK
 
 on:
-  workflow_dispatch:
   push:
+    branches: [main, master]
+  workflow_dispatch:
 
 jobs:
   build:
@@ -19,45 +20,53 @@ jobs:
           distribution: temurin
           java-version: 17
 
-      - name: Install tools
-        run: npm install
-      - name: Install file plugins
-        run: |
-          V=$(node -p "require('@capacitor/core/package.json').version.split('.')[0]")
-          npm install @capacitor/filesystem@$V @capacitor/share@$V
-      - name: Prepare web files
+      - name: Prepare web folder
         run: |
           mkdir -p www
-          cp -f index.html sw.js manifest.json icon-192.png icon-512.png www/
-          if [ -f sidikacem-map.json ]; then cp -f sidikacem-map.json www/; fi
-      - name: Add Android bridge
-        run: |
-          cp -f android-bridge.js www/
-          sed -i '0,/<\/head>/s|</head>|<script src="./android-bridge.js"></script></head>|' www/index.html
-      - name: Create Android project
+          for f in index.html sw.js manifest.json icon-192.png icon-512.png sidikacem-map.json; do
+            [ -f "$f" ] && cp "$f" www/ || true
+          done
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Add Android platform
         run: npx cap add android
+
+      - name: Generate app icons
+        run: |
+          mkdir -p assets
+          cp icon-only.png icon-foreground.png icon-background.png assets/
+          npm install @capacitor/assets --no-save
+          npx @capacitor/assets generate --android
 
       - name: Add permissions
         run: |
-          F=android/app/src/main/AndroidManifest.xml
-          sed -i 's#</manifest>#    <uses-permission android:name="android.permission.CAMERA" />\n    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />\n    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />\n    <uses-feature android:name="android.hardware.camera" android:required="false" />\n</manifest>#' $F
-          cat $F
-      - name: Add extra permissions
-        run: |
-          F=android/app/src/main/AndroidManifest.xml
-          for P in INTERNET CAMERA ACCESS_FINE_LOCATION ACCESS_COARSE_LOCATION; do
-            grep -q "android.permission.$P\"" $F || sed -i "s#</manifest>#    <uses-permission android:name=\"android.permission.$P\" />\n</manifest>#" $F
-          done
-      - name: Copy web files
+          python3 - <<'PY'
+          p = "android/app/src/main/AndroidManifest.xml"
+          s = open(p, encoding="utf-8").read()
+          perms = """
+              <uses-permission android:name="android.permission.INTERNET" />
+              <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
+              <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
+              <uses-permission android:name="android.permission.CAMERA" />
+              <uses-feature android:name="android.hardware.camera" android:required="false" />
+          """
+          s = s.replace("<application", perms + "\n    <application", 1)
+          open(p, "w", encoding="utf-8").write(s)
+          PY
+
+      - name: Sync web files
         run: npx cap sync android
 
-      - name: Build APK
+      - name: Build debug APK
+        working-directory: android
         run: |
-          cd android
           chmod +x gradlew
           ./gradlew assembleDebug
-      - name: Save APK
+
+      - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: app-debug
+          name: SmartRV-apk
           path: android/app/build/outputs/apk/debug/app-debug.apk
