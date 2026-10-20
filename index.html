@@ -4543,6 +4543,9 @@
                         <div class="unified-edit-sheet-sub">${escapeHtml(m.meter || '—')} · ${escapeHtml(m.name || 'Client')}</div>
                     </div>
                     <div>
+                        <button type="button" class="unified-edit-option" onclick="closeUnifiedEditSheet();setTimeout(function(){confirmerLaPlace();},0);">
+                            <span class="unified-edit-option-icon">📍</span><span>Confirmer la place</span>
+                        </button>
                         <button type="button" class="unified-edit-option" onclick="closeUnifiedEditSheet();setTimeout(function(){openMeterNumberFixModal();},0);">
                             <span class="unified-edit-option-icon">🔢</span><span>Modifier le numéro du compteur actuel</span>
                         </button>
@@ -12028,7 +12031,7 @@ html body.v176-hide-prev.v176-hide-prev #entryPage .entry-previous-box{display:n
    Bouton « Vérifier les mises à jour » dans le menu de la tournée. */
 (function(){
   var busy=false;
-  var BUILD_CODE='V245-2026-09-25'; // change ce texte à chaque nouvelle version envoyée, pour vérifier visuellement qu'elle est bien chargée
+  var BUILD_CODE='V318-CLAVIER-2026-10-20'; // change ce texte à chaque nouvelle version envoyée, pour vérifier visuellement qu'elle est bien chargée
   function say(m,t){ try{ showToast(m,t||'info'); }catch(_){ } }
   window.v210CheckUpdate=function(){
     if(busy) return;
@@ -15096,6 +15099,7 @@ html body #entryPage.v296 .v296-comp .v296-send{width:68px!important;height:68px
   function toast(t,k){try{showToast(t,k||'success');}catch(_){}}
 
   async function place(){
+    return; /* V329 : déplacement automatique désactivé — la place se confirme via « 📍 Confirmer la place » (menu ✏️). Code d'origine conservé ci-dessous. */
     var p=pending; if(!p||placing) return; pending=null; placing=true;
     try{
       var m=p.meter, ref=p.anchor;
@@ -15142,6 +15146,32 @@ html body #entryPage.v296 .v296-comp .v296-send{width:68px!important;height:68px
     }
     if(c&&ready(c)&&c.current!==undefined&&(hasRead(c)||!pending.hadGps&&c.gps)){ if(pending.wasEmpty&&!c.gps===!pending.hadGps&&typed()) return; place(); }  /* V312: pas de déplacement pendant la saisie (sinon rendu + verrouillage avant le passage auto) */
   }
+  /* V329 — « 📍 Confirmer la place » : place le compteur appelé juste après le compteur où l'on travaillait avant l'appel. */
+  function tourOf(m){ try{ return String((m&&m.tour)||(typeof tourName!=='undefined'?tourName:'')||'').trim(); }catch(_){ return ''; } }
+  async function confirmerLaPlace(){
+    try{
+      var m=cur();
+      if(!m){ toast('Aucun compteur sélectionné.','warn'); return; }
+      if(grouped()){ toast('Ordre regroupé actif : restaurez d’abord l’ordre initial.','warn'); return; }
+      var p=pending;
+      if(!p||p.meter!==m||!p.anchor||p.anchor===m||allMetersData.indexOf(m)<0||allMetersData.indexOf(p.anchor)<0||!window.v290Test){
+        toast('Aucune place à confirmer : ce compteur n’a pas été appelé depuis un autre compteur.','warn'); return;
+      }
+      var ref=p.anchor, order=allMetersData.slice().sort(sortByIdx);
+      if(order.indexOf(m)===order.indexOf(ref)+1){ pending=null; toast('Ce compteur est déjà à sa place (après '+(ref.meter||'')+').','success'); return; }
+      var tm=tourOf(m), tr=tourOf(ref);
+      if(tm!==tr){
+        if(!confirm('⚠️ Tournées différentes\n\nLe compteur '+(m.meter||'')+' appartient à la tournée « '+(tm||'—')+' ».\nVous voulez le placer après le compteur '+(ref.meter||'')+' de la tournée « '+(tr||'—')+' ».\n\nConfirmer le changement de place ?')) return;
+      }
+      try{saveCurrentInputs();}catch(_){}
+      var r=await window.v290Test.place(m,ref,true);
+      if(r&&r.ok!==false){
+        pending=null;
+        toast('Place confirmée : compteur '+(m.meter||'')+' après '+(ref.meter||'')+' · Tournée '+(tr||'—'),'success');
+      } else toast('Déplacement non enregistré — réessayez.','warn');
+    }catch(e){ console.error('v329',e); toast('Confirmation impossible.','error'); }
+  }
+  window.confirmerLaPlace=confirmerLaPlace;
   function init(){
     wrap('nextMeter'); wrap('prevMeter');
     setInterval(function(){ try{tick();}catch(e){} },150);
@@ -15478,6 +15508,18 @@ html body #entryPage.v296 .page-content{padding-bottom:90px !important;}
 html body #centralAlert,html body #centralAlert.show-alert{background:transparent !important;-webkit-backdrop-filter:none !important;backdrop-filter:none !important;}
 html body #centralAlert > div{box-shadow:0 12px 40px rgba(2,12,30,.38),0 0 0 1px rgba(15,23,42,.14) !important;}
 </style>
+<style id="v330-style">
+/* V330 — écran Saisie : réduction de 3 espaces marqués sur la capture (CSS seul, aucune fonction touchée)
+   1) bande « n / total » + barre de progression : moins haute ; 2) espace entre la case Index et la ligne Annotation ;
+   3) espace entre la ligne Annotation / photo et la carte Client. */
+html body #entryPage.v296 .v296-meta{padding:0 14px 2px !important;}
+html body #entryPage.v296 .v296-meta .tour-mini-input{height:20px !important;}
+html body #entryPage.v296 .v296-meta .v125-tour-row{min-height:0 !important;}
+html body #entryPage.v296 .fixed-top-header .max-w-md{padding-top:4px !important;}
+html body #entryPage.v296 .fixed-top-header .entry-reading-card{margin-top:0 !important;padding-top:3px !important;}
+html body #entryPage.v296 .fixed-top-header{padding-bottom:4px !important;}
+html body #entryPage.v296 .page-content{margin-top:-6px !important;}
+</style>
 <script id="v317-js">
 /* V317 — les avertissements (consommation négative / élevée) sont désormais liés à la VALEUR saisie :
    dès qu'on tape un index dans ce compteur, la fenêtre s'affiche, même si ce compteur avait déjà été « acquitté » ou relevé avant.
@@ -15521,6 +15563,356 @@ html body #centralAlert > div{box-shadow:0 12px 40px rgba(2,12,30,.38),0 0 0 1px
   }
   function go(){ if(!install()) setTimeout(go,200); }
   if(document.readyState==='loading') document.addEventListener('DOMContentLoaded',go); else go();
+})();
+</script>
+<!-- V318 — Clavier numérique intégré pour le champ Index (additif : ne touche à aucune fonction existante).
+     Chiffres 0-9 + Effacer + Effacer tout + Valider ➜ (équivaut exactement à la touche Entrée = saveAndGoNext). -->
+<style id="skpStyle">
+#skpPad{display:none;position:fixed;left:0;right:0;bottom:0;z-index:60;box-sizing:border-box;padding:6px 8px calc(8px + env(safe-area-inset-bottom,0px));background:#e8edf3;border-top:1px solid #cbd5e1;box-shadow:0 -8px 24px -12px rgba(15,23,42,.35);grid-template-columns:repeat(3,1fr) 1.15fr;grid-template-rows:repeat(4,clamp(52px,8.4vh,68px));gap:8px;-webkit-user-select:none;user-select:none;-webkit-touch-callout:none;touch-action:manipulation;}
+body.skp-open #skpPad{display:grid;}
+#skpPad button{margin:0;padding:0;border:0;border-radius:14px;background:#fff;color:#0f172a;font:700 28px/1 ui-monospace,system-ui,sans-serif;box-shadow:0 1px 0 rgba(15,23,42,.18);-webkit-tap-highlight-color:transparent;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;}
+#skpPad button:active{background:#cfe0ff;transform:scale(.97);}
+#skpPad button small{font:700 11px/1 system-ui,sans-serif;color:#475569;letter-spacing:.02em;}
+#skpPad .skp-fn{background:#d5dde8;font-size:22px;}
+#skpPad .skp-clr{background:#fde2e2;color:#991b1b;}
+#skpPad .skp-clr small{color:#991b1b;}
+#skpPad .skp-ok{grid-column:4;grid-row:1 / span 4;background:#0f766e;color:#fff;font-size:30px;box-shadow:0 1px 0 rgba(0,0,0,.25);}
+#skpPad .skp-ok:active{background:#0b5a54;}
+#skpPad .skp-ok small{color:#d1fae5;font-size:13px;}
+body.skp-open .fixed-nav-bar,body.skp-open #kbHideFab{display:none!important;}
+html body.skp-open #entryPage.v296 .v296-comp{bottom:var(--skp-h,260px)!important;}
+body.skp-open #entryPage{padding-bottom:calc(var(--skp-h,260px) + 80px);}
+.dark-mode #skpPad{background:#0d1420;border-top-color:#25324a;}
+.dark-mode #skpPad button{background:#1c2638;color:#e5edf8;box-shadow:none;}
+.dark-mode #skpPad button small{color:#9fb0c8;}
+.dark-mode #skpPad .skp-fn{background:#25324a;}
+.dark-mode #skpPad .skp-clr{background:#4a1d1d;color:#fecaca;}
+.dark-mode #skpPad .skp-ok{background:#0f766e;color:#fff;}
+</style>
+<div id="skpPad" role="group" aria-label="Clavier numérique" aria-hidden="true">
+  <button type="button" data-k="1">1</button><button type="button" data-k="2">2</button><button type="button" data-k="3">3</button>
+  <button type="button" data-k="4">4</button><button type="button" data-k="5">5</button><button type="button" data-k="6">6</button>
+  <button type="button" data-k="7">7</button><button type="button" data-k="8">8</button><button type="button" data-k="9">9</button>
+  <button type="button" data-k="clear" class="skp-fn skp-clr" aria-label="Effacer tout"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg><small>Effacer tout</small></button>
+  <button type="button" data-k="0">0</button>
+  <button type="button" data-k="back" class="skp-fn" aria-label="Effacer"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M21 5H9l-6 7 6 7h12a1 1 0 0 0 1-1V6a1 1 0 0 0-1-1z"/><path d="M12.5 9.5l5 5M17.5 9.5l-5 5"/></svg><small>Effacer</small></button>
+  <div class="skp-col">
+    <button type="button" data-k="ok" class="skp-ok" aria-label="Valider et passer au compteur suivant"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 12h15M13 6l6 6-6 6"/></svg><small>VALIDER<br>L'INDEX</small></button>
+    <button type="button" id="skpOpt" class="skp-side" aria-label="Plus d'options">PLUS<br>D'OPTIONS</button>
+    <button type="button" id="skpGeo" class="skp-side" aria-label="Géolocaliser ce compteur"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 21s-6.5-6-6.5-11a6.5 6.5 0 0 1 13 0c0 5-6.5 11-6.5 11z"/><circle cx="12" cy="10" r="2.3"/></svg><span>GÉOLOCALISER</span></button>
+  </div>
+</div>
+<script>
+(function(){
+  'use strict';
+  var inp=null, pad=null, rep=null, repT=null;
+  function page(){ var p=document.getElementById('entryPage'); return !!p && !p.classList.contains('hidden'); }
+  function canShow(){
+    if(!inp||!page()||document.activeElement!==inp||inp.readOnly||inp.disabled) return false;
+    if(inp.offsetParent===null && getComputedStyle(inp).position!=='fixed') return false;
+    return true;
+  }
+  function show(on){
+    var b=document.body, now=b.classList.contains('skp-open');
+    if(on===now) return;
+    b.classList.toggle('skp-open',on);
+    pad.setAttribute('aria-hidden',on?'false':'true');
+    if(on){ var h=Math.ceil(pad.getBoundingClientRect().height); if(h>80) document.documentElement.style.setProperty('--skp-h',h+'px'); }
+  }
+  function sync(){ if(!inp) return; show(canShow()); }
+  function fire(){ inp.dispatchEvent(new Event('input',{bubbles:true})); }
+  function put(d){
+    if(inp.readOnly) return;
+    var v=inp.value||'', s=v.length, e=v.length;
+    try{ if(inp.selectionStart!=null){ s=inp.selectionStart; e=inp.selectionEnd; } }catch(_){}
+    inp.value=v.slice(0,s)+d+v.slice(e);
+    try{ inp.setSelectionRange(s+1,s+1); }catch(_){}
+    fire();
+  }
+  function back(){
+    if(inp.readOnly) return;
+    var v=inp.value||'', s=v.length, e=v.length;
+    try{ if(inp.selectionStart!=null){ s=inp.selectionStart; e=inp.selectionEnd; } }catch(_){}
+    if(s!==e){ inp.value=v.slice(0,s)+v.slice(e); try{ inp.setSelectionRange(s,s); }catch(_){} }
+    else if(s>0){ inp.value=v.slice(0,s-1)+v.slice(s); try{ inp.setSelectionRange(s-1,s-1); }catch(_){} }
+    else return;
+    fire();
+  }
+  function clearAll(){ if(inp.readOnly||!inp.value) return; inp.value=''; fire(); }
+  function ok(){
+    // Identique à la touche Entrée physique : handleKeyPress -> saveAndGoNext (toutes les règles existantes s'appliquent).
+    var ev; try{ ev=new KeyboardEvent('keydown',{key:'Enter',code:'Enter',keyCode:13,which:13,bubbles:true,cancelable:true}); }catch(_){ ev=null; }
+    if(ev) inp.dispatchEvent(ev); else if(typeof saveAndGoNext==='function') saveAndGoNext();
+    // garder le clavier pour le compteur suivant (si le champ n'est pas verrouillé / pas d'alerte ouverte)
+    setTimeout(function(){
+      try{
+        if(page()&&inp&&!inp.readOnly&&(!document.activeElement||document.activeElement===document.body)) inp.focus({preventScroll:true});
+      }catch(_){}
+      sync();
+    },250);
+  }
+  function act(k){
+    try{ if(navigator.vibrate) navigator.vibrate(8); }catch(_){}
+    if(k==='back') back(); else if(k==='clear') clearAll(); else if(k==='ok') ok(); else if(/^[0-9]$/.test(k)) put(k);
+  }
+  function stopRep(){ clearTimeout(repT); clearInterval(rep); repT=rep=null; }
+  function init(){
+    inp=document.getElementById('newIndexInput'); pad=document.getElementById('skpPad');
+    if(!inp||!pad) return;
+    // Empêche le clavier Android d'apparaître pour ce champ (le focus et le curseur restent actifs)
+    inp.setAttribute('inputmode','none');
+    pad.addEventListener('pointerdown',function(e){
+      var b=e.target.closest&&e.target.closest('button[data-k]'); if(!b) return;
+      e.preventDefault(); // garde le focus dans le champ Index
+      var k=b.getAttribute('data-k'); act(k);
+      if(k==='back'){ stopRep(); repT=setTimeout(function(){ rep=setInterval(function(){ back(); },70); },420); }
+    });
+    ['pointerup','pointercancel','pointerleave'].forEach(function(n){ pad.addEventListener(n,stopRep); });
+    pad.addEventListener('mousedown',function(e){ e.preventDefault(); });
+    pad.addEventListener('click',function(e){ e.preventDefault(); });
+    pad.addEventListener('contextmenu',function(e){ e.preventDefault(); });
+    document.addEventListener('focusin',function(){ setTimeout(sync,0); });
+    document.addEventListener('focusout',function(){ setTimeout(sync,90); });
+    inp.addEventListener('focus',function(){ sync(); });
+    document.addEventListener('visibilitychange',sync);
+    // filet de sécurité léger : page quittée, champ déverrouillé/verrouillé, changement de compteur
+    setInterval(sync,400);
+    sync();
+  }
+  if(document.readyState==='loading') document.addEventListener('DOMContentLoaded',init); else init();
+})();
+</script>
+
+<!-- V331 — Refonte visuelle de l'écran Saisie (maquette AQUADRAIN) : CSS + déplacement d'éléments existants, aucune logique modifiée. -->
+<style id="v331-style">
+/* ===== V331 — Refonte VISUELLE de l'écran Saisie (style « AQUADRAIN » d'après la maquette) =====
+   100 % présentation : aucune fonction, aucun ID, aucune donnée modifiés. Les éléments réels sont
+   restylés / déplacés (jamais recréés), les nouveaux éléments sont purement décoratifs ou appellent
+   des fonctions déjà existantes. Désactivé automatiquement en mode « classique » (smartrv_entry_classic). */
+html body #entryPage.v296.v331{--aq-navy:#0e3760;--aq-bg:#f3f5f8;--aq-card:#ffffff;--aq-ink:#0b1a2e;--aq-mute:#46566c;--aq-line:#cdd5df;--aq-box:#e8edf3;--aq-blue:#1b6fb5;--aq-accent:#3a9bea;background:var(--aq-bg)!important;}
+html body.dark-mode #entryPage.v296.v331{--aq-navy:#0a2240;--aq-bg:#0b1220;--aq-card:#141d30;--aq-ink:#f1f5f9;--aq-mute:#a8b5cc;--aq-line:#2c3a57;--aq-box:#1e293b;--aq-blue:#1d5f9c;}
+html body #entryPage.v296.v331 .page-content{background:var(--aq-bg)!important;}
+html body #entryPage.v296.v331 .fixed-top-header{background:var(--aq-bg)!important;border:0!important;box-shadow:0 8px 18px -12px rgba(8,28,56,.45)!important;padding-bottom:8px!important;}
+html body #entryPage.v296.v331 .fixed-top-header .max-w-md{padding:0 12px!important;}
+html body #entryPage.v296.v331 .v296-meta,html body #entryPage.v296.v331 .v296-prog{display:none!important;}
+
+/* ---- Barre supérieure bleu nuit ---- */
+html body #entryPage.v296.v331 .v296-bar{background:var(--aq-navy)!important;padding:calc(10px + env(safe-area-inset-top,0px)) 14px 8px!important;gap:8px!important;align-items:center!important;}
+html body #entryPage.v296.v331 .v296-bar .v298-mid{display:none!important;}
+html body #entryPage.v296.v331 .v296-bar .v127-menu-trigger{width:36px!important;height:36px!important;min-width:36px!important;flex:none!important;border-radius:50%!important;border:0!important;box-shadow:none!important;overflow:hidden;background:#d3d8df url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Ccircle cx='12' cy='9.2' r='4.2' fill='%238b93a0'/%3E%3Cpath d='M3.6 24c.5-5.6 4-8.4 8.4-8.4s7.9 2.8 8.4 8.4z' fill='%238b93a0'/%3E%3C/svg%3E") center/100% no-repeat!important;}
+html body #entryPage.v296.v331 .v296-bar .v127-menu-trigger>span{display:none!important;}
+html body #entryPage.v296.v331 .v331-brand{display:flex;align-items:center;gap:6px;flex:1 1 auto;min-width:0;}
+html body #entryPage.v296.v331 .v331-brand svg{width:30px;height:36px;flex:none;}
+html body #entryPage.v296.v331 .v331-brand .t{display:flex;flex-direction:column;line-height:1.08;min-width:0;}
+html body #entryPage.v296.v331 .v331-brand b{color:#fff;font-size:17px;font-weight:800;letter-spacing:.03em;}
+html body #entryPage.v296.v331 .v331-brand .t span{color:#d4e3f3;font-size:9.5px;font-weight:600;letter-spacing:.05em;white-space:nowrap;}
+html body #entryPage.v296.v331 .v296-bar #entrySearchBtn,html body #entryPage.v296.v331 .v296-bar #v331Add,html body #entryPage.v296.v331 .v296-bar #torchBtn{width:36px!important;height:36px!important;min-width:36px!important;padding:0!important;margin:0!important;border:0!important;border-radius:50%!important;background:transparent!important;box-shadow:none!important;color:#fff!important;font-size:0!important;display:flex!important;align-items:center;justify-content:center;flex:none!important;position:relative!important;-webkit-tap-highlight-color:transparent;}
+html body #entryPage.v296.v331 .v296-bar #entrySearchBtn svg,html body #entryPage.v296.v331 .v296-bar #v331Add svg,html body #entryPage.v296.v331 .v296-bar #torchBtn svg{width:25px!important;height:25px!important;fill:none!important;stroke:currentColor!important;color:#fff!important;stroke-width:1.9;opacity:1!important;}
+html body #entryPage.v296.v331 .v296-bar #torchBtn[aria-pressed="true"],html body #entryPage.v296.v331 .v296-bar #torchBtn[aria-pressed="true"] svg{color:#facc15!important;}
+
+/* ---- Onglets ---- */
+html body #entryPage.v296.v331 .v331-tabs{display:grid;grid-template-columns:repeat(4,1fr);background:var(--aq-navy);padding:0 12px;}
+html body #entryPage.v296.v331 .v331-tabs button{position:relative;margin:0;padding:9px 2px 11px;border:0;background:transparent;color:#9fb5cf;font:700 12.5px/1 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;letter-spacing:.03em;text-transform:uppercase;white-space:nowrap;-webkit-tap-highlight-color:transparent;}
+html body #entryPage.v296.v331 .v331-tabs button.on{color:#fff;}
+html body #entryPage.v296.v331 .v331-tabs button.on::after{content:"";position:absolute;left:0;right:0;bottom:0;height:3px;border-radius:2px 2px 0 0;background:var(--aq-accent);}
+html body #entryPage.v296.v331 .v331-tabs button:active{opacity:.7;}
+
+/* ---- Carte compteur ---- */
+html body #entryPage.v296.v331 #meterTopCard{position:relative;margin:10px 0 0!important;background:var(--aq-card)!important;border:0!important;border-radius:20px!important;overflow:hidden!important;box-shadow:0 6px 18px rgba(16,42,76,.16)!important;padding:0!important;}
+html body #entryPage.v296.v331 #meterTopCard.status-normal,html body #entryPage.v296.v331 #meterTopCard.status-stopped{box-shadow:0 6px 18px rgba(16,42,76,.16),inset 5px 0 0 #16a34a!important;}
+html body #entryPage.v296.v331 #meterTopCard.status-negative{box-shadow:0 6px 18px rgba(16,42,76,.16),inset 5px 0 0 #dc2626!important;}
+html body #entryPage.v296.v331 #meterTopCard.status-high{box-shadow:0 6px 18px rgba(16,42,76,.16),inset 5px 0 0 #eab308!important;}
+html body #entryPage.v296.v331 #meterTopCard.status-blocked{box-shadow:0 6px 18px rgba(16,42,76,.16),inset 5px 0 0 #6b7280!important;}
+html body #entryPage.v296.v331 #meterTopCard .meter-number-bar{padding:0!important;background:transparent!important;box-shadow:none!important;min-height:0!important;display:block!important;}
+html body #entryPage.v296.v331 #meterTopCard .meter-number-main{display:flex!important;flex-direction:column;align-items:stretch;position:relative!important;padding:0!important;margin:0!important;text-align:center!important;background:transparent!important;}
+html body #entryPage.v296.v331 #meterTopCard .meter-number-meta{display:contents!important;}
+html body #entryPage.v296.v331 #meterTopCard .entry-status-pill{order:1;display:flex!important;align-items:center;justify-content:center;width:100%;margin:0!important;padding:0!important;height:32px;border:0!important;border-radius:0!important;background:var(--aq-blue)!important;color:#fff!important;font-size:15px!important;font-weight:800;letter-spacing:.03em;}
+html body #entryPage.v296.v331 #meterTopCard .entry-status-pill.v298-elec{background:#b45309!important;color:#fff!important;}
+html body #entryPage.v296.v331 #meterTopCard .entry-status-pill #typeBadge{display:inline-flex;align-items:center;gap:6px;color:#fff!important;font-weight:800;}
+html body #entryPage.v296.v331 #meterTopCard .entry-status-pill svg{width:16px;height:16px;color:#fff!important;}
+html body #entryPage.v296.v331 #meterTopCard .entry-status-pill .v298-sw{opacity:.9;font-size:14px;margin-left:2px;}
+html body #entryPage.v296.v331 #meterTopCard #meterNum{order:2;text-align:center!important;color:var(--aq-ink)!important;font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif!important;font-weight:800!important;letter-spacing:.015em!important;margin:12px 12px 0!important;line-height:1.1!important;}
+html body #entryPage.v296.v331 #meterTopCard .entry-meter-label{order:3;display:block;font-size:0!important;margin:2px 0 10px!important;text-align:center;}
+html body #entryPage.v296.v331 #meterTopCard .entry-meter-label::after{content:"METER ID / COMPTEUR";font-size:11px;font-weight:600;letter-spacing:.04em;color:var(--aq-mute);text-transform:uppercase;}
+html body #entryPage.v296.v331 #meterTopCard .meter-status-anomaly{order:4;align-self:center;}
+html body #entryPage.v296.v331 #meterTopCard .meter-status-anomaly.hidden{display:none!important;}
+html body #entryPage.v296.v331 #meterTopCard .entry-contract-card{display:flex!important;gap:10px;padding:0 12px 12px!important;margin:0!important;background:transparent!important;border:0!important;box-shadow:none!important;}
+html body #entryPage.v296.v331 #meterTopCard .entry-contract-main,html body #entryPage.v296.v331 #meterTopCard .entry-previous-box{flex:1 1 0!important;min-width:0;display:flex!important;flex-direction:column;align-items:center;justify-content:center;gap:1px;padding:7px 6px!important;margin:0!important;background:var(--aq-box)!important;border:0!important;border-radius:13px!important;box-shadow:none!important;text-align:center;}
+html body #entryPage.v296.v331 #meterTopCard .entry-contract-label{font-size:10.5px!important;font-weight:600!important;letter-spacing:.04em!important;color:var(--aq-mute)!important;text-transform:uppercase;text-align:center;}
+html body #entryPage.v296.v331 #meterTopCard .entry-previous-box>span:first-child{font-size:0!important;display:block!important;text-align:center;}
+html body #entryPage.v296.v331 #meterTopCard .entry-previous-box>span:first-child::after{content:"ANCIEN INDEX";font-size:10.5px;font-weight:600;letter-spacing:.04em;color:var(--aq-mute);}
+html body #entryPage.v296.v331 #meterTopCard #contractNum,html body #entryPage.v296.v331 #meterTopCard #prevIndex{display:block!important;color:var(--aq-ink)!important;font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif!important;font-size:21px!important;font-weight:800!important;margin:0!important;text-align:center;}
+html body #entryPage.v296.v331 #meterTopCard #meterNum{box-sizing:border-box!important;min-width:0!important;max-width:100%!important;width:auto!important;padding:0 2px!important;margin:12px 10px 0!important;white-space:nowrap!important;overflow:hidden!important;}
+html body #entryPage.v296.v331 #meterTopCard .meter-number-main{min-width:0!important;max-width:100%;}
+/* champ « Tournée » (réel, déplacé) : discret, à droite de la barre bleue */
+html body #entryPage.v296.v331 #meterTopCard>.v125-tour-row{position:absolute!important;top:0;right:8px;z-index:4;height:32px;width:auto!important;display:flex!important;align-items:center;margin:0!important;padding:0!important;}
+html body #entryPage.v296.v331 #meterTopCard>.v125-tour-row .tour-mini-input{width:78px!important;max-width:78px!important;min-width:0!important;flex:0 0 78px!important;height:22px!important;padding:0 2px!important;border:0!important;border-bottom:1px dashed rgba(255,255,255,.55)!important;border-radius:0!important;background:transparent!important;box-shadow:none!important;color:#fff!important;font-size:11.5px!important;font-weight:700!important;text-align:right;}
+html body #entryPage.v296.v331 #meterTopCard>.v125-tour-row .tour-mini-input::placeholder{color:rgba(255,255,255,.65);}
+
+/* ---- NOUVEL INDEX ---- */
+html body #entryPage.v296.v331 .v331-head{display:flex;align-items:baseline;justify-content:space-between;margin:12px 4px 6px;color:var(--aq-ink);}
+html body #entryPage.v296.v331 .v331-head .lab{font-size:17px;font-weight:800;letter-spacing:.02em;text-transform:uppercase;}
+html body #entryPage.v296.v331 .v331-head .v296-unit{font-size:17px!important;font-weight:800!important;color:var(--aq-ink)!important;text-transform:uppercase;}
+html body #entryPage.v296.v331 #v296Comp{display:flex!important;align-items:center;gap:8px!important;padding:0!important;margin:0!important;}
+html body #entryPage.v296.v331 #v296Comp>div:not(.v296-send){position:relative;flex:1 1 0!important;min-width:0;width:auto!important;height:clamp(68px,9.8vh,80px)!important;min-height:0!important;padding:0 14px!important;margin:0!important;display:flex!important;align-items:center;gap:8px!important;background:var(--aq-card)!important;border:2px solid #12365c!important;border-radius:16px!important;box-shadow:inset 0 2px 6px rgba(12,35,64,.08)!important;}
+html body.dark-mode #entryPage.v296.v331 #v296Comp>div:not(.v296-send){border-color:#5b8fd0!important;}
+html body #entryPage.v296.v331 #v296Comp:focus-within>div:not(.v296-send){border-color:var(--aq-accent)!important;box-shadow:0 0 0 4px rgba(58,155,234,.2)!important;}
+html body #entryPage.v296.v331 #v296Comp #newIndexInput{flex:1 1 0;min-width:0;width:auto!important;height:100%!important;min-height:0!important;padding:0 0 8px!important;margin:0!important;border:0!important;background:transparent!important;caret-color:var(--aq-accent)!important;color:var(--aq-ink)!important;font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif!important;font-size:48px!important;font-weight:800!important;letter-spacing:0!important;line-height:1.1!important;text-align:center!important;box-shadow:none!important;}
+html body #entryPage.v296.v331 #v296Comp #newIndexInput:placeholder-shown{text-align:center!important;}
+html body #entryPage.v296.v331 #v296Comp #newIndexInput:focus::placeholder{color:transparent!important;}
+html body #entryPage.v296.v331 #v296Comp #newIndexInput::placeholder{color:#6b7788;font-size:18px!important;font-weight:500!important;}
+html body #entryPage.v296.v331 .v331-count{position:absolute;right:14px;bottom:6px;font-size:11.5px;font-weight:600;color:var(--aq-mute);pointer-events:none;font-variant-numeric:tabular-nums;}
+html body #entryPage.v296.v331 #v296Comp #meterEditPencilBtn{position:static!important;flex:none;width:42px!important;height:42px!important;margin:0!important;padding:0!important;border:0!important;border-radius:12px!important;background:transparent!important;color:var(--aq-ink)!important;display:flex!important;align-items:center;justify-content:center;box-shadow:none!important;}
+html body #entryPage.v296.v331 #v296Comp #meterEditPencilBtn svg{width:26px!important;height:26px!important;}
+
+/* ---- Annotation + appareil photo ---- */
+html body #entryPage.v296.v331 .fixed-top-header .entry-reading-card{margin-top:0!important;padding:8px 0 0!important;}
+html body #entryPage.v296.v331 .anomaly-compact.v302-row{gap:8px!important;}
+html body #entryPage.v296.v331 #anomalySelect{height:48px!important;border:1.5px solid var(--aq-line)!important;border-radius:14px!important;background-color:var(--aq-card)!important;color:var(--aq-ink)!important;font-size:16px!important;font-weight:500!important;}
+html body #entryPage.v296.v331 .anomaly-compact.v302-row .entry-share-icon-btn{width:48px!important;height:48px!important;border-radius:14px!important;border:1.5px solid var(--aq-line)!important;background:var(--aq-card)!important;color:var(--aq-ink)!important;}
+html body #entryPage.v296.v331 .anomaly-compact.v302-row .entry-share-icon-btn svg{width:26px!important;height:26px!important;}
+
+/* La barre de navigation du bas est remplacée, sur cet écran, par les onglets du haut (elle revient sur les autres pages). */
+body:has(#entryPage.v296.v331:not(.hidden)) .fixed-nav-bar{display:none!important;}
+
+/* ---- Clavier numérique intégré (#skpPad) ---- */
+html body #skpPad{--skp-row:clamp(50px,7.6vh,60px);--skp-gap:8px;grid-template-columns:repeat(3,1fr) 1.12fr;grid-template-rows:repeat(4,var(--skp-row));gap:var(--skp-gap);padding:10px 10px calc(10px + env(safe-area-inset-bottom,0px));background:#e4e8ee;border-top:1px solid #d3d9e1;box-shadow:0 -8px 24px -14px rgba(15,23,42,.35);}
+html body #skpPad button{border-radius:14px;background:#dcdfe5;color:#14233a;font:700 28px/1 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;box-shadow:0 2px 0 rgba(15,23,42,.14),inset 0 1px 0 rgba(255,255,255,.55);}
+html body #skpPad button:active{background:#c6ccd6;transform:scale(.97);}
+html body #skpPad button[data-k="0"]{background:#fff;}
+html body #skpPad button small{font:600 11.5px/1 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;letter-spacing:0;}
+html body #skpPad button svg{width:22px;height:22px;fill:none;stroke:currentColor;stroke-width:2.2;stroke-linecap:round;stroke-linejoin:round;pointer-events:none;}
+html body #skpPad .skp-clr{background:#f5dada;color:#b3342b;}
+html body #skpPad .skp-clr small{color:#b3342b;}
+html body #skpPad .skp-fn{background:#c8ccd3;color:#2b3442;font-size:22px;}
+html body #skpPad .skp-fn small{color:#2b3442;}
+html body #skpPad .skp-col{grid-column:4;grid-row:1 / span 4;display:flex;flex-direction:column;gap:var(--skp-gap);min-height:0;}
+html body #skpPad .skp-col .skp-ok{flex:1 1 0;min-height:0;grid-column:auto;grid-row:auto;background:#2f8f5b;color:#fff;gap:8px;box-shadow:0 2px 0 rgba(0,0,0,.2);}
+html body #skpPad .skp-col .skp-ok:active{background:#26774b;}
+html body #skpPad .skp-col .skp-ok svg{width:34px;height:34px;stroke-width:2.4;}
+html body #skpPad .skp-col .skp-ok small{color:#fff;font-size:12.5px;font-weight:800;letter-spacing:.03em;line-height:1.15;text-align:center;}
+html body #skpPad .skp-col .skp-side{flex:0 0 calc(var(--skp-row)*.74);min-height:0;background:#e9ecf1;color:#1b2a3f;font:800 11.5px/1.15 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;letter-spacing:.04em;text-transform:uppercase;text-align:center;flex-direction:row;gap:5px;padding:0 4px;border:1px solid #d0d6df;box-shadow:0 1px 0 rgba(15,23,42,.1);}
+html body #skpPad .skp-col .skp-side svg{width:17px;height:17px;flex:none;}
+html body.dark-mode #skpPad{background:#0d1420;border-top-color:#25324a;}
+html body.dark-mode #skpPad button{background:#1c2638;color:#e5edf8;box-shadow:none;}
+html body.dark-mode #skpPad button[data-k="0"]{background:#243148;}
+html body.dark-mode #skpPad .skp-clr{background:#4a1d1d;color:#fecaca;}
+html body.dark-mode #skpPad .skp-clr small{color:#fecaca;}
+html body.dark-mode #skpPad .skp-fn,html body.dark-mode #skpPad .skp-fn small{background:#25324a;color:#e5edf8;}
+html body.dark-mode #skpPad .skp-col .skp-ok{background:#2f8f5b;color:#fff;}
+html body.dark-mode #skpPad .skp-col .skp-side{background:#1c2638;color:#e5edf8;border-color:#25324a;}
+</style>
+<script id="v331-js">
+/* V331 — Refonte visuelle de l'écran Saisie : les éléments réels sont DÉPLACÉS (jamais recréés) ;
+   les nouveaux éléments appellent uniquement des fonctions déjà existantes. Aucune donnée touchée. */
+(function(){
+  try{ if(localStorage.getItem('smartrv_entry_classic')==='1') return; }catch(_){}
+  var pg=document.getElementById('entryPage'); if(!pg) return;
+  pg.classList.add('v331');
+  var tries=0;
+  function q(s){ return pg.querySelector(s); }
+  function call(fn){ try{ if(typeof window[fn]==='function') return window[fn].apply(window,[].slice.call(arguments,1)); }catch(e){ console.error('v331',fn,e); } }
+
+  function build(){
+    var bar=q('.v296-bar'), card=q('#meterTopCard'), comp=document.getElementById('v296Comp');
+    var ready=pg.classList.contains('v296')&&bar&&card&&comp;
+    if(!ready||(comp.parentNode!==card.parentNode&&tries<120)){ if(++tries<=130) return setTimeout(build,150); if(!ready) return; }
+    if(document.getElementById('v331Tabs')) return;
+
+    var menu=bar.querySelector('.v127-menu-trigger'), search=document.getElementById('entrySearchBtn'), torch=document.getElementById('torchBtn');
+    if(!menu||!search||!torch) return;
+
+    /* 1) Barre du haut : profil (☰ réel) · logo/titre · loupe · + · lampe */
+    var brand=document.createElement('div'); brand.className='v331-brand'; brand.id='v331Brand';
+    brand.innerHTML='<svg viewBox="0 0 48 56" aria-hidden="true"><defs><linearGradient id="v331g" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#8fd6ff"/><stop offset="1" stop-color="#1b6fb5"/></linearGradient></defs><path d="M24 3C24 3 6 24 6 36a18 18 0 0 0 36 0C42 24 24 3 24 3z" fill="url(#v331g)" stroke="#d6ecff" stroke-width="2"/><text x="24" y="43" text-anchor="middle" font-family="system-ui,sans-serif" font-weight="900" font-size="19" fill="#fff">AA</text></svg><div class="t"><b>AQUADRAIN</b><span>SOLUTIONS - METERING</span></div>';
+    bar.insertBefore(brand,menu.nextSibling);
+    var add=document.createElement('button'); add.type='button'; add.id='v331Add'; add.title='Ajouter un compteur'; add.setAttribute('aria-label','Ajouter un compteur');
+    add.innerHTML='<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9.2"/><path d="M12 7.6v8.8M7.6 12h8.8"/></svg>';
+    add.addEventListener('click',function(){ call('openNewMeterModal'); });
+    bar.appendChild(search); bar.appendChild(add); bar.appendChild(torch);
+
+    /* 2) Onglets : mêmes pages que la barre du bas (CARTE = bouton Carte existant) */
+    var tabs=document.createElement('nav'); tabs.className='v331-tabs'; tabs.id='v331Tabs'; tabs.setAttribute('aria-label','Navigation');
+    [['CARTE','map'],['LISTE','controlPage'],['PARAMÈTRES','setupPage'],['RAPPORTS','recordsPage']].forEach(function(t,i){
+      var b=document.createElement('button'); b.type='button'; b.textContent=t[0]; b.setAttribute('data-go',t[1]); if(i===0) b.className='on';
+      b.addEventListener('click',function(){
+        var g=t[1];
+        if(g==='map'){ var m=document.getElementById('v298Map'); if(m) m.click(); else call('openCarte'); }
+        else call('switchTab',g);
+      });
+      tabs.appendChild(b);
+    });
+    bar.parentNode.insertBefore(tabs,bar.nextSibling);
+
+    /* 3) Champ « Tournée » (réel) déplacé dans la carte compteur */
+    var tour=q('.v125-tour-row'); if(tour&&tour.parentNode!==card) card.insertBefore(tour,card.firstChild);
+
+    /* 4) Libellé NOUVEL INDEX + unité (élément réel #v296Unit déplacé) */
+    var head=document.createElement('div'); head.className='v331-head'; head.id='v331Head';
+    var lab=document.createElement('span'); lab.className='lab'; lab.textContent='Nouvel index'; head.appendChild(lab);
+    var unit=document.getElementById('v296Unit'); if(unit) head.appendChild(unit);
+    comp.parentNode.insertBefore(head,comp);
+
+    /* 5) Compteur « lus / total » dans le champ (recopie du compteur existant #v296Count) */
+    var shell=comp.querySelector('.entry-index-shell')||comp.querySelector('div');
+    var src=document.getElementById('v296Count');
+    if(shell){
+      var cnt=document.createElement('div'); cnt.className='v331-count'; cnt.id='v331Count'; cnt.setAttribute('aria-hidden','true'); shell.appendChild(cnt);
+      var sync=function(){ var t=src?String(src.textContent||'').trim():''; cnt.textContent=(t&&t!=='—')?t:''; };
+      if(src){ try{ new MutationObserver(sync).observe(src,{childList:true,characterData:true,subtree:true}); }catch(_){} }
+      sync(); setInterval(sync,1200);
+    }
+    var inp=document.getElementById('newIndexInput'); if(inp) inp.setAttribute('placeholder','Entrez l\u2019index...');
+
+    /* 6) Crayon réel (modifier les données) à droite du champ */
+    var pencil=document.getElementById('meterEditPencilBtn'); if(pencil&&pencil.parentNode!==comp) comp.appendChild(pencil);
+
+    try{ syncEntryContentOffset(); }catch(_){}
+    setTimeout(function(){ try{ syncEntryContentOffset(); }catch(_){} },300);
+    setTimeout(function(){ try{ syncEntryContentOffset(); }catch(_){} },1200);
+  }
+
+  /* Boutons additionnels du clavier : PLUS D'OPTIONS = menu ☰ existant ; GÉOLOCALISER = point GPS existant (getGPSLocation) */
+  function wirePad(){
+    var opt=document.getElementById('skpOpt'), geo=document.getElementById('skpGeo');
+    if(!opt||!geo||opt._v331) return; opt._v331=true;
+    [opt,geo].forEach(function(b){
+      b.addEventListener('pointerdown',function(e){ e.preventDefault(); });   // garde le focus dans le champ Index
+      b.addEventListener('mousedown',function(e){ e.preventDefault(); });
+    });
+    opt.addEventListener('click',function(){ try{ if(navigator.vibrate) navigator.vibrate(8); }catch(_){} call('toggleEntrySideMenu',true); });
+    geo.addEventListener('click',function(){
+      try{ if(navigator.vibrate) navigator.vibrate(8); }catch(_){}
+      var dot=document.getElementById('gpsLiveDot');
+      if(dot) dot.click(); else call('getGPSLocation',false);
+    });
+  }
+
+
+  /* Ajustement automatique de la taille du N° compteur : il tient toujours en entier dans la carte (jusqu'à 11 px). */
+  var fitKey='';
+  function fitMeter(force){
+    var mn=document.getElementById('meterNum'); if(!mn||pg.classList.contains('hidden')) return;
+    var avail=mn.clientWidth; if(!avail) return;
+    var key=(mn.textContent||'')+'|'+avail; if(!force&&key===fitKey) return;
+    var s=34; mn.style.setProperty('font-size',s+'px','important');
+    while(s>11&&mn.scrollWidth>mn.clientWidth+0.5){ s-=0.5; mn.style.setProperty('font-size',s+'px','important'); }
+    fitKey=(mn.textContent||'')+'|'+mn.clientWidth;
+  }
+  function wireFit(){
+    var mn=document.getElementById('meterNum'); if(!mn||mn._v331fit) return; mn._v331fit=true;
+    try{ new MutationObserver(function(){ fitKey=''; fitMeter(true); }).observe(mn,{childList:true,characterData:true,subtree:true}); }catch(_){}
+    window.addEventListener('resize',function(){ fitKey=''; fitMeter(true); });
+    window.addEventListener('orientationchange',function(){ setTimeout(function(){ fitKey=''; fitMeter(true); },200); });
+    var card=document.getElementById('meterTopCard');
+    if(card&&window.ResizeObserver){ try{ new ResizeObserver(function(){ fitKey=''; fitMeter(true); }).observe(card); }catch(_){} }
+    if(document.fonts&&document.fonts.ready) document.fonts.ready.then(function(){ fitMeter(true); });
+    setInterval(function(){ fitMeter(false); },500);
+    fitMeter(true);
+  }
+
+  function init(){ wirePad(); build(); wireFit(); setTimeout(wireFit,600); setTimeout(function(){ fitKey=''; fitMeter(true); },1500); }
+  if(document.readyState==='loading') document.addEventListener('DOMContentLoaded',init); else init();
 })();
 </script>
 </body>
