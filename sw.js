@@ -2,7 +2,7 @@
    - Pré-cache l'app + les 5 bibliothèques CDN au premier lancement EN LIGNE.
    - Ensuite tout fonctionne sans connexion (cache d'abord).
    - Mise à jour MANUELLE uniquement : bouton « Vérifier les mises à jour » (message CHECK_FOR_UPDATE). */
-const CACHE = 'smartrv-cache-v46';
+const CACHE = 'smartrv-cache-v54';
 const CORE = ['./', './index.html', './manifest.json', './icon-192.png', './icon-512.png', './sidikacem-map.json'];
 const CDN = [
   'https://cdn.tailwindcss.com',
@@ -20,10 +20,20 @@ self.addEventListener('install', (event) => {
   event.waitUntil((async () => {
     const cache = await caches.open(CACHE);
     await Promise.allSettled(CORE.map((u) => cache.add(new Request(u, { cache: 'reload' }))));
+    // V313 : récupérer d'abord dans les anciens caches ce qui s'y trouve déjà (évite de perdre tailwind/xlsx… si la mise à jour s'installe avec un réseau faible)
+    const old = (await caches.keys()).filter((k) => k !== CACHE && k !== TILES);
+    const fromOld = async (u) => { for (const k of old) { const h = await (await caches.open(k)).match(u); if (h) return h; } return null; };
     await Promise.allSettled(CDN.map(async (u) => {
       if (await cache.match(u)) return;
-      const res = await fetch(new Request(u, { mode: 'no-cors' }));
-      await cache.put(u, res);
+      try {
+        const res = await fetch(new Request(u, { mode: 'no-cors' }));
+        if (res && (res.ok || res.type === 'opaque')) { await cache.put(u, res); return; }
+      } catch (_) {}
+      const h = await fromOld(u); if (h) await cache.put(u, h);
+    }));
+    await Promise.allSettled(CORE.map(async (u) => {
+      if (await cache.match(u)) return;
+      const h = await fromOld(u); if (h) await cache.put(u, h);
     }));
   })());
   self.skipWaiting();
