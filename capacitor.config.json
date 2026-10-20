@@ -1,5 +1,6 @@
 {
-  "appId": "com.web2apk.app",
-  "appName": "MonApp",
-  "webDir": "www"
+  "appId": "com.smartrv.app",
+  "appName": "Smart RV",
+  "webDir": "www",
+  "android": { "allowMixedContent": true }
 }

@@ -1,6 +1,43 @@
 <!DOCTYPE html>
 <html lang="fr" dir="ltr">
 <head>
+<script>
+/* Pont Android : enregistre les téléchargements dans le stockage du téléphone */
+(function(){
+ var C=window.Capacitor; if(!(C&&C.isNativePlatform&&C.isNativePlatform()))return;
+ function toast(m){try{var t=document.createElement('div');t.textContent=m;t.style.cssText='position:fixed;left:12px;right:12px;bottom:24px;z-index:2147483647;background:#0b2a5b;color:#fff;padding:12px 14px;border-radius:12px;font:14px/1.4 sans-serif;box-shadow:0 6px 20px rgba(0,0,0,.35)';t.onclick=function(){t.remove()};document.body.appendChild(t);setTimeout(function(){t.remove()},7000)}catch(e){}}
+ var EXT={'application/pdf':'.pdf','application/zip':'.zip','application/json':'.json','text/csv':'.csv','image/png':'.png','image/jpeg':'.jpg','application/vnd.openxmlformats-officedocument.spreadsheetml.sheet':'.xlsx'};
+ async function saveUrl(url,name){
+  var FS=C.Plugins&&C.Plugins.Filesystem; if(!FS){toast('❌ Stockage indisponible');return}
+  try{
+   var blob=await (await fetch(url)).blob();
+   if(!name)name='Document_'+Date.now()+(EXT[blob.type]||'');
+   name=String(name).replace(/[\\/:*?"<>|]+/g,'_');
+   var data=await new Promise(function(res,rej){var r=new FileReader();r.onload=function(){res(String(r.result).split(',')[1])};r.onerror=function(){rej(r.error)};r.readAsDataURL(blob)});
+   var path='SmartRV/'+name;
+   try{await FS.writeFile({path:path,data:data,directory:'DOCUMENTS',recursive:true});toast('✔ Enregistré dans le téléphone : Documents/'+path);return}catch(e){}
+   await FS.writeFile({path:path,data:data,directory:'EXTERNAL',recursive:true});
+   toast('✔ Enregistré dans le téléphone : Android/data/com.smartrv.app/files/'+path);
+  }catch(e){toast('❌ '+(e&&e.message||e))}
+ }
+ var oc=HTMLAnchorElement.prototype.click;
+ HTMLAnchorElement.prototype.click=function(){
+  var h=this.href||'';
+  if(this.hasAttribute('download')&&/^(blob:|data:)/.test(h)){saveUrl(h,this.getAttribute('download'));return}
+  return oc.apply(this,arguments);
+ };
+ document.addEventListener('click',function(e){
+  var a=e.target&&e.target.closest&&e.target.closest('a[download]');
+  if(a&&/^(blob:|data:)/.test(a.href)){e.preventDefault();e.stopPropagation();saveUrl(a.href,a.getAttribute('download'))}
+ },true);
+ var wo=window.open;
+ window.open=function(u){
+  if(typeof u==='string'&&/^blob:/.test(u)){saveUrl(u,null);return {closed:false,close:function(){},focus:function(){},document:{write:function(){},close:function(){}}}}
+  return wo.apply(window,arguments);
+ };
+})();
+</script>
+
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, interactive-widget=resizes-content">
     <title>Smart RV — Gestion indépendante de tournée de relevé</title>

@@ -2,7 +2,7 @@
    - Pré-cache l'app + les 5 bibliothèques CDN au premier lancement EN LIGNE.
    - Ensuite tout fonctionne sans connexion (cache d'abord).
    - Mise à jour MANUELLE uniquement : bouton « Vérifier les mises à jour » (message CHECK_FOR_UPDATE). */
-const CACHE = 'smartrv-cache-v54';
+const CACHE = 'smartrv-cache-v56';
 const CORE = ['./', './index.html', './manifest.json', './icon-192.png', './icon-512.png', './sidikacem-map.json'];
 const CDN = [
   'https://cdn.tailwindcss.com',
