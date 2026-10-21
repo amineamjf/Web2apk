@@ -1,43 +1,6 @@
 <!DOCTYPE html>
 <html lang="fr" dir="ltr">
 <head>
-<script>
-/* Pont Android : enregistre les téléchargements dans le stockage du téléphone */
-(function(){
- var C=window.Capacitor; if(!(C&&C.isNativePlatform&&C.isNativePlatform()))return;
- function toast(m){try{var t=document.createElement('div');t.textContent=m;t.style.cssText='position:fixed;left:12px;right:12px;bottom:24px;z-index:2147483647;background:#0b2a5b;color:#fff;padding:12px 14px;border-radius:12px;font:14px/1.4 sans-serif;box-shadow:0 6px 20px rgba(0,0,0,.35)';t.onclick=function(){t.remove()};document.body.appendChild(t);setTimeout(function(){t.remove()},7000)}catch(e){}}
- var EXT={'application/pdf':'.pdf','application/zip':'.zip','application/json':'.json','text/csv':'.csv','image/png':'.png','image/jpeg':'.jpg','application/vnd.openxmlformats-officedocument.spreadsheetml.sheet':'.xlsx'};
- async function saveUrl(url,name){
-  var FS=C.Plugins&&C.Plugins.Filesystem; if(!FS){toast('❌ Stockage indisponible');return}
-  try{
-   var blob=await (await fetch(url)).blob();
-   if(!name)name='Document_'+Date.now()+(EXT[blob.type]||'');
-   name=String(name).replace(/[\\/:*?"<>|]+/g,'_');
-   var data=await new Promise(function(res,rej){var r=new FileReader();r.onload=function(){res(String(r.result).split(',')[1])};r.onerror=function(){rej(r.error)};r.readAsDataURL(blob)});
-   var path='SmartRV/'+name;
-   try{await FS.writeFile({path:path,data:data,directory:'DOCUMENTS',recursive:true});toast('✔ Enregistré dans le téléphone : Documents/'+path);return}catch(e){}
-   await FS.writeFile({path:path,data:data,directory:'EXTERNAL',recursive:true});
-   toast('✔ Enregistré dans le téléphone : Android/data/com.smartrv.app/files/'+path);
-  }catch(e){toast('❌ '+(e&&e.message||e))}
- }
- var oc=HTMLAnchorElement.prototype.click;
- HTMLAnchorElement.prototype.click=function(){
-  var h=this.href||'';
-  if(this.hasAttribute('download')&&/^(blob:|data:)/.test(h)){saveUrl(h,this.getAttribute('download'));return}
-  return oc.apply(this,arguments);
- };
- document.addEventListener('click',function(e){
-  var a=e.target&&e.target.closest&&e.target.closest('a[download]');
-  if(a&&/^(blob:|data:)/.test(a.href)){e.preventDefault();e.stopPropagation();saveUrl(a.href,a.getAttribute('download'))}
- },true);
- var wo=window.open;
- window.open=function(u){
-  if(typeof u==='string'&&/^blob:/.test(u)){saveUrl(u,null);return {closed:false,close:function(){},focus:function(){},document:{write:function(){},close:function(){}}}}
-  return wo.apply(window,arguments);
- };
-})();
-</script>
-
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, interactive-widget=resizes-content">
     <title>Smart RV — Gestion indépendante de tournée de relevé</title>
@@ -56,6 +19,12 @@
                 navigator.serviceWorker.register('./sw.js').catch(function (err) {
                     console.warn('Échec d’enregistrement du service worker (mode hors-ligne) :', err);
                 });
+                /* V333 : si un fichier de la bibliothèque (Tailwind, Excel, PDF, carte…) manque dans le cache hors ligne, il est récupéré dès qu'on ouvre l'app avec internet */
+                try {
+                    navigator.serviceWorker.ready.then(function (reg) {
+                        if (navigator.onLine && reg && reg.active) reg.active.postMessage('ENSURE_CACHE');
+                    }).catch(function () {});
+                } catch (e) {}
                 /* V313 : stockage persistant — empêche Android d'effacer le cache hors-ligne (et la base) après quelques jours d'inactivité */
                 try { if (navigator.storage && navigator.storage.persist) navigator.storage.persist().catch(function(){}); } catch (e) {}
             });
@@ -74,16 +43,50 @@
 .dark-mode #entryPage .entry-index-stat small{color:#aeb9cd;}
 
 </style>
+    <script>
+        /* V333 : verrouillage en portrait. Le manifeste (orientation) s'applique à l'app installée ; ceci complète par l'API
+           screen.orientation.lock (acceptée seulement en app installée / plein écran — ignorée sans erreur ailleurs). */
+        (function () {
+            function lockPortrait() {
+                try {
+                    var o = window.screen && screen.orientation;
+                    if (o && typeof o.lock === 'function') { var p = o.lock('portrait'); if (p && p.catch) p.catch(function () {}); }
+                } catch (e) {}
+            }
+            lockPortrait();
+            document.addEventListener('visibilitychange', function () { if (!document.hidden) lockPortrait(); });
+            window.addEventListener('orientationchange', lockPortrait);
+            ['pointerdown', 'touchend'].forEach(function (t) {
+                document.addEventListener(t, function once() { document.removeEventListener(t, once, true); lockPortrait(); }, true);
+            });
+        })();
+    </script>
     <script src="https://cdn.tailwindcss.com"></script>
     <script>
+        /* V333 : le bandeau rouge ci-dessous est produit par l'application elle-même quand Tailwind (cdn.tailwindcss.com)
+           n'a pas été chargé. Avant de l'afficher : 1 nouvelle tentative (le service worker sert alors la copie en cache),
+           puis message adapté (hors ligne = « cache pas encore prêt », en ligne = problème de réseau). */
         window.addEventListener('load', function() {
+            function showBanner() {
+                if (document.getElementById('v333OfflineBanner')) return;
+                var offline = (typeof navigator.onLine === 'boolean') && !navigator.onLine;
+                var banner = document.createElement('div');
+                banner.id = 'v333OfflineBanner';
+                banner.style.cssText = 'position:fixed;top:0;left:0;right:0;z-index:999999;background:#b91c1c;color:#fff;padding:12px 14px;font:700 13px/1.4 system-ui,sans-serif;text-align:center;box-shadow:0 2px 10px rgba(0,0,0,.3)';
+                banner.textContent = offline
+                    ? '⚠️ Mode hors ligne : les fichiers d\'affichage ne sont pas encore enregistrés sur ce téléphone. Ouvrez l\'application une fois avec internet (WiFi/données), attendez quelques secondes, puis rouvrez-la.'
+                    : '⚠️ Connexion internet requise pour charger l\'application correctement. Vérifiez votre connexion (WiFi/données) puis rechargez la page.';
+                document.body.insertBefore(banner, document.body.firstChild);
+            }
             setTimeout(function() {
-                if (typeof window.tailwind === 'undefined') {
-                    var banner = document.createElement('div');
-                    banner.style.cssText = 'position:fixed;top:0;left:0;right:0;z-index:999999;background:#b91c1c;color:#fff;padding:12px 14px;font:700 13px/1.4 system-ui,sans-serif;text-align:center;box-shadow:0 2px 10px rgba(0,0,0,.3)';
-                    banner.textContent = '⚠️ Connexion internet requise pour charger l\'application correctement. Vérifiez votre connexion (WiFi/données) puis rechargez la page.';
-                    document.body.insertBefore(banner, document.body.firstChild);
-                }
+                if (typeof window.tailwind !== 'undefined') return;
+                try {
+                    var s = document.createElement('script');
+                    s.src = 'https://cdn.tailwindcss.com';
+                    s.onerror = showBanner;
+                    document.head.appendChild(s);
+                } catch (e) { showBanner(); return; }
+                setTimeout(function() { if (typeof window.tailwind === 'undefined') showBanner(); }, 2500);
             }, 3500);
         });
     </script>
@@ -4607,6 +4610,9 @@
                         <button type="button" class="unified-edit-option" onclick="closeUnifiedEditSheet();setTimeout(function(){openNewMeterModal();},0);">
                             <span class="unified-edit-option-icon">➕</span><span>Ajouter un compteur</span>
                         </button>
+                        <button type="button" class="unified-edit-option" style="color:#b91c1c" onclick="closeUnifiedEditSheet();setTimeout(function(){v332DeleteMeter(${allMetersData.indexOf(m)});},0);">
+                            <span class="unified-edit-option-icon">🗑️</span><span>Supprimer le compteur</span>
+                        </button>
                     </div>
                     <button type="button" class="unified-edit-close" onclick="closeUnifiedEditSheet()">Fermer</button>
                 </div>`;
@@ -5751,7 +5757,7 @@
                 const conso = Number.isFinite(prev) && Number.isFinite(curr) ? curr - prev : '----';
                 const typeLabel = m.type === 'ELEC' ? '⚡ Électricité' : '💧 Eau';
                 const resultStateClass = controlFilter === 'read' ? 'result-read' : (controlFilter === 'pending' ? 'result-pending' : '');
-                return `<div class="search-result-card ${resultStateClass} ${isNext ? 'border-l-4 border-emerald-500 bg-emerald-50/40' : ''}" oncontextmenu="return false;" onpointerdown="startCardLongPress(event, ${idx})" onpointerup="cancelCardLongPress()" onpointerleave="cancelCardLongPress()" onpointercancel="cancelCardLongPress()">
+                return `<div class="search-result-card ${resultStateClass} ${(m.v290Prev || m.manualHighlight) ? 'v332-moved' : ''} ${isNext ? 'border-l-4 border-emerald-500 bg-emerald-50/40' : ''}" oncontextmenu="return false;" onpointerdown="startCardLongPress(event, ${idx})" onpointerup="cancelCardLongPress()" onpointerleave="cancelCardLongPress()" onpointercancel="cancelCardLongPress()">
                     <div class="flex items-start justify-between gap-2">
                         <div class="min-w-0">
                             <div class="flex items-center gap-2">
@@ -5857,6 +5863,7 @@
                     <button type="button" onclick="document.getElementById('meterQuickActionsModal')?.remove();editMeterFromList(${globalIdx});" style="text-align:left;padding:14px;border:0;background:transparent;font-size:14px;font-weight:900;color:#0f172a;border-radius:10px">✏️ Modifier la lecture</button>
                     <button type="button" onclick="document.getElementById('meterQuickActionsModal')?.remove();openMeterNumberFixModal(${globalIdx});" style="text-align:left;padding:14px;border:0;background:transparent;font-size:14px;font-weight:900;color:#0f172a;border-radius:10px">✏️ Modifier le n° du compteur actuel</button>
                     <button type="button" onclick="openMeterReorderMenu(${globalIdx});" style="text-align:left;padding:14px;border:0;background:transparent;font-size:14px;font-weight:900;color:#0f172a;border-radius:10px">🔀 Réordonner</button>
+                    <button type="button" onclick="document.getElementById('meterQuickActionsModal')?.remove();v332DeleteMeter(${globalIdx});" style="text-align:left;padding:14px;border:0;background:transparent;font-size:14px;font-weight:900;color:#b91c1c;border-radius:10px">🗑️ Supprimer le compteur</button>
                 </div>
                 <div style="padding:8px 8px 14px"><button type="button" onclick="document.getElementById('meterQuickActionsModal')?.remove()" style="width:100%;border:0;border-radius:12px;padding:11px;background:#f1f5f9;color:#334155;font-weight:800;font-size:13px">Fermer</button></div>
             </div>`;
@@ -14640,6 +14647,7 @@ window.openCarte=openCarte;window.closeCarte=closeCarte;window.SmartCarte={C:C,p
     if(r.ok===false&&r.from===undefined){ toast('Retour impossible.','error'); return; }
     delete m.v290Prev;
     try{await v231PersistOrder();}catch(_){}
+    try{ renderControlPage(); }catch(_){} try{ renderDedicatedSearch(); }catch(_){}
     refresh();
     toast('Compteur '+(m.meter||'')+' revenu à sa place : n° '+r.from+' → n° '+r.to,'success');
   }
@@ -14721,6 +14729,8 @@ window.openCarte=openCarte;window.closeCarte=closeCarte;window.SmartCarte={C:C,p
       l.querySelectorAll('.nb-row').forEach(function(r){
         var m=filteredMeters[+r.getAttribute('data-i')];
         var has=r.querySelector('.v290-badge');
+        r.classList.toggle('v332-moved',!!(m&&(m.v290Prev||m.manualHighlight)));
+        if((!m||!m.v290Prev)&&has){ has.remove(); has=null; }
         if(m&&m.v290Prev&&!has){ var mt=r.querySelector('.nb-meter'); if(mt){var s=document.createElement('span');s.className='v290-badge';s.textContent='↕ déplacé';mt.appendChild(s);} }
       });
     }
@@ -15635,6 +15645,7 @@ body.skp-open #entryPage{padding-bottom:calc(var(--skp-h,260px) + 80px);}
   <button type="button" data-k="back" class="skp-fn" aria-label="Effacer"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M21 5H9l-6 7 6 7h12a1 1 0 0 0 1-1V6a1 1 0 0 0-1-1z"/><path d="M12.5 9.5l5 5M17.5 9.5l-5 5"/></svg><small>Effacer</small></button>
   <div class="skp-col">
     <button type="button" data-k="ok" class="skp-ok" aria-label="Valider et passer au compteur suivant"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 12h15M13 6l6 6-6 6"/></svg><small>VALIDER<br>L'INDEX</small></button>
+    <button type="button" id="skpSearch" class="skp-search" aria-label="Rechercher un compteur"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="6.5"/><path d="M16 16l4.5 4.5"/></svg><small>RECHERCHER</small></button>
     <button type="button" id="skpOpt" class="skp-side" aria-label="Plus d'options">PLUS<br>D'OPTIONS</button>
     <button type="button" id="skpGeo" class="skp-side" aria-label="Géolocaliser ce compteur"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 21s-6.5-6-6.5-11a6.5 6.5 0 0 1 13 0c0 5-6.5 11-6.5 11z"/><circle cx="12" cy="10" r="2.3"/></svg><span>GÉOLOCALISER</span></button>
   </div>
@@ -15824,10 +15835,14 @@ html body #skpPad .skp-clr small{color:#b3342b;}
 html body #skpPad .skp-fn{background:#c8ccd3;color:#2b3442;font-size:22px;}
 html body #skpPad .skp-fn small{color:#2b3442;}
 html body #skpPad .skp-col{grid-column:4;grid-row:1 / span 4;display:flex;flex-direction:column;gap:var(--skp-gap);min-height:0;}
-html body #skpPad .skp-col .skp-ok{flex:1 1 0;min-height:0;grid-column:auto;grid-row:auto;background:#2f8f5b;color:#fff;gap:8px;box-shadow:0 2px 0 rgba(0,0,0,.2);}
+html body #skpPad .skp-col .skp-ok{flex:2 1 0;min-height:0;grid-column:auto;grid-row:auto;background:#2f8f5b;color:#fff;gap:8px;box-shadow:0 2px 0 rgba(0,0,0,.2);}
 html body #skpPad .skp-col .skp-ok:active{background:#26774b;}
-html body #skpPad .skp-col .skp-ok svg{width:34px;height:34px;stroke-width:2.4;}
+html body #skpPad .skp-col .skp-ok svg{width:30px;height:30px;stroke-width:2.4;}
 html body #skpPad .skp-col .skp-ok small{color:#fff;font-size:12.5px;font-weight:800;letter-spacing:.03em;line-height:1.15;text-align:center;}
+html body #skpPad .skp-col .skp-search{flex:1 1 0;min-height:0;flex-direction:row;gap:6px;padding:0 4px;background:#0b6e8a;color:#fff;box-shadow:0 2px 0 rgba(0,0,0,.2);}
+html body #skpPad .skp-col .skp-search:active{background:#085a73;}
+html body #skpPad .skp-col .skp-search svg{width:20px;height:20px;flex:none;stroke-width:2.4;}
+html body #skpPad .skp-col .skp-search small{color:#fff;font-size:11px;font-weight:800;letter-spacing:.03em;}
 html body #skpPad .skp-col .skp-side{flex:0 0 calc(var(--skp-row)*.74);min-height:0;background:#e9ecf1;color:#1b2a3f;font:800 11.5px/1.15 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;letter-spacing:.04em;text-transform:uppercase;text-align:center;flex-direction:row;gap:5px;padding:0 4px;border:1px solid #d0d6df;box-shadow:0 1px 0 rgba(15,23,42,.1);}
 html body #skpPad .skp-col .skp-side svg{width:17px;height:17px;flex:none;}
 html body.dark-mode #skpPad{background:#0d1420;border-top-color:#25324a;}
@@ -15843,9 +15858,9 @@ html body.dark-mode #skpPad .skp-col .skp-side{background:#1c2638;color:#e5edf8;
 /* V331 — Refonte visuelle de l'écran Saisie : les éléments réels sont DÉPLACÉS (jamais recréés) ;
    les nouveaux éléments appellent uniquement des fonctions déjà existantes. Aucune donnée touchée. */
 (function(){
-  try{ if(localStorage.getItem('smartrv_entry_classic')==='1') return; }catch(_){}
+  var classic=false; try{ classic=(localStorage.getItem('smartrv_entry_classic')==='1'); }catch(_){}
   var pg=document.getElementById('entryPage'); if(!pg) return;
-  pg.classList.add('v331');
+  if(!classic) pg.classList.add('v331');
   var tries=0;
   function q(s){ return pg.querySelector(s); }
   function call(fn){ try{ if(typeof window[fn]==='function') return window[fn].apply(window,[].slice.call(arguments,1)); }catch(e){ console.error('v331',fn,e); } }
@@ -15911,8 +15926,13 @@ html body.dark-mode #skpPad .skp-col .skp-side{background:#1c2638;color:#e5edf8;
 
   /* Boutons additionnels du clavier : PLUS D'OPTIONS = menu ☰ existant ; GÉOLOCALISER = point GPS existant (getGPSLocation) */
   function wirePad(){
-    var opt=document.getElementById('skpOpt'), geo=document.getElementById('skpGeo');
+    var opt=document.getElementById('skpOpt'), geo=document.getElementById('skpGeo'), sch=document.getElementById('skpSearch');
     if(!opt||!geo||opt._v331) return; opt._v331=true;
+    if(sch){
+      sch.addEventListener('pointerdown',function(e){ e.preventDefault(); });
+      sch.addEventListener('mousedown',function(e){ e.preventDefault(); });
+      sch.addEventListener('click',function(){ try{ if(navigator.vibrate) navigator.vibrate(8); }catch(_){} call('openEntrySearchModal'); });
+    }
     [opt,geo].forEach(function(b){
       b.addEventListener('pointerdown',function(e){ e.preventDefault(); });   // garde le focus dans le champ Index
       b.addEventListener('mousedown',function(e){ e.preventDefault(); });
@@ -15948,7 +15968,264 @@ html body.dark-mode #skpPad .skp-col .skp-side{background:#1c2638;color:#e5edf8;
     fitMeter(true);
   }
 
-  function init(){ wirePad(); build(); wireFit(); setTimeout(wireFit,600); setTimeout(function(){ fitKey=''; fitMeter(true); },1500); }
+  function init(){ wirePad(); if(classic) return; build(); wireFit(); setTimeout(wireFit,600); setTimeout(function(){ fitKey=''; fitMeter(true); },1500); }
+  if(document.readyState==='loading') document.addEventListener('DOMContentLoaded',init); else init();
+})();
+</script>
+
+<style id="v332-style">
+/* ===== V332 — Compteurs « déplacés » (📍 Confirmer la place) surlignés en orange + suppression sécurisée ===== */
+/* Liste des compteurs (feuille voisins) */
+#v280Nb .nb-row.v332-moved:not(.nb-dragging):not(.v290-press){background:#fff1e0;border:2px solid #f97316;box-shadow:inset 6px 0 0 #f97316;color:#7c2d12;}
+#v280Nb .nb-row.v332-moved:not(.nb-dragging):not(.v290-press) .nb-name,#v280Nb .nb-row.v332-moved:not(.nb-dragging):not(.v290-press) .nb-pos,#v280Nb .nb-row.v332-moved:not(.nb-dragging):not(.v290-press) .nb-tag{color:#9a3412;}
+#v280Nb .nb-row.v332-moved.cur:not(.nb-dragging){background:#ffedd5;border-color:#ea580c;border-width:3px;box-shadow:0 0 0 3px rgba(249,115,22,.28),inset 6px 0 0 #f97316;}
+.dark-mode #v280Nb .nb-row.v332-moved:not(.nb-dragging):not(.v290-press){background:#3a2410;border-color:#f97316;color:#ffedd5;}
+.dark-mode #v280Nb .nb-row.v332-moved:not(.nb-dragging):not(.v290-press) .nb-name,.dark-mode #v280Nb .nb-row.v332-moved:not(.nb-dragging):not(.v290-press) .nb-pos,.dark-mode #v280Nb .nb-row.v332-moved:not(.nb-dragging):not(.v290-press) .nb-tag{color:#fdba74;}
+/* Cartes de la page Contrôle / recherche (spécificité > .result-read / .result-pending / anomalies) */
+html body #controlPage .search-result-card.v332-moved,html body #dedicatedSearchResults .search-result-card.v332-moved{background:#fff1e0!important;border:2px solid #f97316!important;border-left:6px solid #f97316!important;box-shadow:0 2px 10px rgba(249,115,22,.22)!important;}
+html body #controlPage .search-result-card.v332-moved .font-mono,html body #dedicatedSearchResults .search-result-card.v332-moved .font-mono{color:#7c2d12!important;}
+html body #controlPage .search-result-card.v332-moved .text-gray-800,html body #controlPage .search-result-card.v332-moved .text-gray-600,html body #controlPage .search-result-card.v332-moved .text-gray-500,html body #dedicatedSearchResults .search-result-card.v332-moved .text-gray-800,html body #dedicatedSearchResults .search-result-card.v332-moved .text-gray-600,html body #dedicatedSearchResults .search-result-card.v332-moved .text-gray-500{color:#7c2d12!important;}
+html body #controlPage .search-result-card.v332-moved .status-chip,html body #dedicatedSearchResults .search-result-card.v332-moved .status-chip{background:#fed7aa!important;color:#9a3412!important;}
+html body.dark-mode #controlPage .search-result-card.v332-moved,html body.dark-mode #dedicatedSearchResults .search-result-card.v332-moved{background:#3a2410!important;border-color:#f97316!important;}
+html body.dark-mode #controlPage .search-result-card.v332-moved .font-mono,html body.dark-mode #dedicatedSearchResults .search-result-card.v332-moved .font-mono,html body.dark-mode #controlPage .search-result-card.v332-moved .text-gray-800,html body.dark-mode #controlPage .search-result-card.v332-moved .text-gray-600,html body.dark-mode #controlPage .search-result-card.v332-moved .text-gray-500,html body.dark-mode #dedicatedSearchResults .search-result-card.v332-moved .text-gray-800,html body.dark-mode #dedicatedSearchResults .search-result-card.v332-moved .text-gray-600,html body.dark-mode #dedicatedSearchResults .search-result-card.v332-moved .text-gray-500{color:#fed7aa!important;}
+html body.dark-mode #controlPage .search-result-card.v332-moved .status-chip,html body.dark-mode #dedicatedSearchResults .search-result-card.v332-moved .status-chip{background:#7c2d12!important;color:#ffedd5!important;}
+/* Boîte de confirmation de suppression */
+#v332DelModal{position:fixed;inset:0;z-index:10100;background:rgba(3,12,24,.72);display:flex;align-items:center;justify-content:center;padding:14px;}
+#v332DelModal .v332-card{width:100%;max-width:400px;background:#fff;color:#0f172a;border-radius:18px;overflow:hidden;box-shadow:0 24px 70px rgba(0,0,0,.4);}
+#v332DelModal .v332-head{padding:14px 16px;background:linear-gradient(135deg,#7f1d1d,#b91c1c);color:#fff;font-size:15px;font-weight:900;}
+#v332DelModal .v332-body{padding:14px 16px;font-size:13px;line-height:1.45;}
+#v332DelModal .v332-num{font:900 20px/1.2 system-ui,sans-serif;letter-spacing:.02em;word-break:break-all;}
+#v332DelModal .v332-sub{color:#475569;font-weight:700;margin-top:2px;}
+#v332DelModal .v332-warn{margin-top:10px;padding:8px 10px;border-radius:10px;background:#fff7ed;border:1px solid #fdba74;color:#9a3412;font-weight:700;font-size:12px;}
+#v332DelModal .v332-info{margin-top:8px;color:#475569;font-size:12px;}
+#v332DelModal .v332-row{display:flex;gap:8px;padding:0 16px 16px;}
+#v332DelModal .v332-row button{flex:1;border:0;border-radius:12px;padding:12px;font-weight:900;font-size:14px;}
+#v332DelModal .v332-cancel{background:#f1f5f9;color:#334155;}
+#v332DelModal .v332-ok{background:#b91c1c;color:#fff;}
+#v332DelModal .v332-ok[disabled]{opacity:.6;}
+body.dark-mode #v332DelModal .v332-card{background:#111a2b;color:#f1f5f9;}
+body.dark-mode #v332DelModal .v332-sub,body.dark-mode #v332DelModal .v332-info{color:#a8b5cc;}
+body.dark-mode #v332DelModal .v332-cancel{background:#1e293b;color:#e2e8f0;}
+/* V334 — Carte compteur de l'écran de saisie : orange si « Remplacement » (v290Prev) OU surlignage manuel (appui long) */
+html body #entryPage.v296.v331 #meterTopCard{-webkit-touch-callout:none;-webkit-user-select:none;user-select:none;}
+html body #entryPage.v296.v331 #meterTopCard.v332-moved{background:#fff1e0!important;box-shadow:0 6px 18px rgba(249,115,22,.32),inset 0 0 0 3px #f97316!important;}
+html body #entryPage.v296.v331 #meterTopCard.v332-moved.status-normal,html body #entryPage.v296.v331 #meterTopCard.v332-moved.status-stopped{box-shadow:0 6px 18px rgba(249,115,22,.32),inset 0 0 0 3px #f97316,inset 8px 0 0 #16a34a!important;}
+html body #entryPage.v296.v331 #meterTopCard.v332-moved.status-negative{box-shadow:0 6px 18px rgba(249,115,22,.32),inset 0 0 0 3px #f97316,inset 8px 0 0 #dc2626!important;}
+html body #entryPage.v296.v331 #meterTopCard.v332-moved.status-high{box-shadow:0 6px 18px rgba(249,115,22,.32),inset 0 0 0 3px #f97316,inset 8px 0 0 #eab308!important;}
+html body #entryPage.v296.v331 #meterTopCard.v332-moved.status-blocked{box-shadow:0 6px 18px rgba(249,115,22,.32),inset 0 0 0 3px #f97316,inset 8px 0 0 #6b7280!important;}
+html body #entryPage.v296.v331 #meterTopCard.v332-moved .entry-status-pill,html body #entryPage.v296.v331 #meterTopCard.v332-moved .entry-status-pill.v298-elec{background:#ea580c!important;color:#fff!important;}
+html body #entryPage.v296.v331 #meterTopCard.v332-moved #meterNum{color:#7c2d12!important;}
+html body #entryPage.v296.v331 #meterTopCard.v332-moved .entry-meter-label::after,html body #entryPage.v296.v331 #meterTopCard.v332-moved .entry-contract-label,html body #entryPage.v296.v331 #meterTopCard.v332-moved .entry-previous-box>span:first-child::after{color:#9a3412!important;}
+html body #entryPage.v296.v331 #meterTopCard.v332-moved .entry-contract-main,html body #entryPage.v296.v331 #meterTopCard.v332-moved .entry-previous-box{background:#ffe2c2!important;}
+html body #entryPage.v296.v331 #meterTopCard.v332-moved #contractNum,html body #entryPage.v296.v331 #meterTopCard.v332-moved #prevIndex{color:#7c2d12!important;}
+html body.dark-mode #entryPage.v296.v331 #meterTopCard.v332-moved{background:#3a2410!important;}
+html body.dark-mode #entryPage.v296.v331 #meterTopCard.v332-moved #meterNum,html body.dark-mode #entryPage.v296.v331 #meterTopCard.v332-moved #contractNum,html body.dark-mode #entryPage.v296.v331 #meterTopCard.v332-moved #prevIndex{color:#ffedd5!important;}
+html body.dark-mode #entryPage.v296.v331 #meterTopCard.v332-moved .entry-meter-label::after,html body.dark-mode #entryPage.v296.v331 #meterTopCard.v332-moved .entry-contract-label,html body.dark-mode #entryPage.v296.v331 #meterTopCard.v332-moved .entry-previous-box>span:first-child::after{color:#fdba74!important;}
+html body.dark-mode #entryPage.v296.v331 #meterTopCard.v332-moved .entry-contract-main,html body.dark-mode #entryPage.v296.v331 #meterTopCard.v332-moved .entry-previous-box{background:#5a3317!important;}
+/* V336 — Fenêtre « Rechercher un compteur » : bouton de bascule clavier chiffres ⇄ lettres bien visible.
+   Chiffres actifs → le bouton affiche « ABC » (appuyer = passer aux lettres) ; lettres actives → « 123 ». */
+#entrySearchModal .v281-wrap{display:flex!important;align-items:stretch;gap:8px;width:100%;}
+#entrySearchModal .v281-wrap>input{flex:1 1 0!important;min-width:0!important;width:auto!important;}
+#entrySearchModal .v281-kb{display:flex!important;visibility:visible!important;align-items:center;justify-content:center;flex:0 0 auto;min-width:64px;min-height:46px;padding:0 12px;border:2px solid #0e7490;border-radius:12px;background:#0891a8;color:#fff;font-size:0!important;box-shadow:0 2px 0 rgba(0,0,0,.15);}
+#entrySearchModal .v281-kb::after{content:"ABC";font-size:16px;font-weight:900;letter-spacing:.04em;}
+#entrySearchModal .v281-kb.abc{background:#fff;color:#0e7490;}
+#entrySearchModal .v281-kb.abc::after{content:"123";}
+</style>
+<script id="v332-js">
+/* V332 — Suppression sécurisée d'un compteur (même couche IndexedDB que le reste de l'appli).
+   Le compteur est retiré de la base de travail (STORE_METER) ; une copie de sécurité est conservée dans
+   STORE_SETTINGS['deletedMeters'] (incluse dans les sauvegardes). Relevés archivés, factures et autres compteurs : intacts. */
+(function(){
+  var busy=false;
+  function esc(s){ s=String(s==null?'':s); return (typeof escapeHtml==='function')?escapeHtml(s):s.replace(/[&<>"']/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];}); }
+  function toast(t,k){ try{ showToast(t,k||'success'); }catch(_){} }
+  function closeModal(){ var d=document.getElementById('v332DelModal'); if(d) d.remove(); }
+  function hasReading(m){ return (m.current!==''&&m.current!=null)||(m.anomaly&&m.anomaly!=='RAS'&&m.anomaly!=='Aucune')||!!m.photo; }
+
+  function openConfirm(globalIdx){
+    var m=Array.isArray(allMetersData)?allMetersData[globalIdx]:null;
+    if(!m){ toast('Compteur introuvable.','warn'); return; }
+    closeModal();
+    var id=meterDBId(m), pos=(Array.isArray(filteredMeters)?filteredMeters.indexOf(m):-1)+1;
+    var hist=(m.history&&typeof m.history==='object')?Object.keys(m.history).length:0;
+    var refs=allMetersData.filter(function(x){ return x!==m&&x&&x.v290Prev&&x.v290Prev.k===id; }).length;
+    var warn=[];
+    if(hasReading(m)) warn.push('Ce compteur a déjà une saisie (index'+(m.photo?', photo':'')+((m.anomaly&&m.anomaly!=='RAS'&&m.anomaly!=='Aucune')?', anomalie':'')+') : elle sera retirée de la tournée et des exports.');
+    if(m.replacedFrom) warn.push('Compteur issu d’un remplacement (ancien n° '+m.replacedFrom+').');
+    if(hist) warn.push(hist+' valeur(s) d’historique attachée(s) à ce compteur.');
+    if(refs) warn.push(refs+' autre(s) compteur(s) gardent un repère « revenir à sa place » qui pointait vers celui-ci : ce repère deviendra introuvable (aucune donnée modifiée).');
+    var d=document.createElement('div'); d.id='v332DelModal';
+    d.innerHTML='<div class="v332-card" role="dialog" aria-modal="true"><div class="v332-head">🗑️ Supprimer ce compteur ?</div><div class="v332-body">'
+      +'<div class="v332-num">'+esc(m.meter||'—')+'</div>'
+      +'<div class="v332-sub">'+esc(m.name||'Client')+' · '+(m.type==='ELEC'?'⚡ Électricité':'💧 Eau')+'<br>Contrat '+esc(m.contract||'—')+(pos?' · n° '+pos:'')+'</div>'
+      +(warn.length?'<div class="v332-warn">'+warn.map(esc).join('<br>')+'</div>':'')
+      +'<div class="v332-info">Le compteur disparaît de la tournée. Une copie de sécurité est conservée dans la base (incluse dans les sauvegardes). Les relevés archivés, les factures déjà générées et les autres compteurs ne sont pas touchés.</div></div>'
+      +'<div class="v332-row"><button type="button" class="v332-cancel">Annuler</button><button type="button" class="v332-ok">Supprimer</button></div></div>';
+    d.addEventListener('click',function(e){ if(e.target===d) closeModal(); });
+    d.querySelector('.v332-cancel').addEventListener('click',closeModal);
+    d.querySelector('.v332-ok').addEventListener('click',function(ev){ ev.currentTarget.disabled=true; doDelete(m); });
+    document.body.appendChild(d);
+  }
+
+  async function doDelete(m){
+    if(busy) return; busy=true;
+    var id=meterDBId(m), label=m.meter||'';
+    try{
+      try{ saveCurrentInputs(); }catch(_){}
+      var db=await openDataDB();
+      var rec=Object.assign({},normalizeMeter(m),{id:id});
+      await new Promise(function(resolve,reject){
+        var tx=db.transaction([STORE_METER,STORE_SETTINGS],'readwrite');
+        var sm=tx.objectStore(STORE_METER), ss=tx.objectStore(STORE_SETTINGS);
+        var g=ss.get('deletedMeters');
+        g.onsuccess=function(){
+          try{
+            var list=(g.result&&Array.isArray(g.result.value))?g.result.value:[];
+            list.push({at:new Date().toISOString(),id:id,record:rec});
+            ss.put({id:'deletedMeters',value:list});
+            sm.delete(id);
+          }catch(e){ try{tx.abort();}catch(_){} reject(e); }
+        };
+        g.onerror=function(){ reject(g.error||new Error('Lecture de la corbeille impossible')); try{tx.abort();}catch(_){} };
+        tx.oncomplete=function(){ resolve(true); };
+        tx.onabort=function(){ reject(tx.error||new Error('Suppression annulée par le navigateur')); };
+        tx.onerror=function(){ reject(tx.error||new Error('Erreur de suppression')); };
+      });
+      // Base mise à jour : on met l'interface à jour immédiatement.
+      var cur=(Array.isArray(filteredMeters)&&currentIndex>=0)?filteredMeters[currentIndex]:null, wasCur=(cur===m), oldPos=currentIndex;
+      var gi=allMetersData.indexOf(m); if(gi>=0) allMetersData.splice(gi,1);
+      v231Rebuild(wasCur?null:cur);
+      if(wasCur){
+        currentIndex=(Array.isArray(filteredMeters)&&filteredMeters.length)?Math.min(Math.max(oldPos,0),filteredMeters.length-1):0;
+        try{ renderCurrentMeter(); }catch(_){}
+      }
+      try{ updateCounts(); }catch(_){}
+      try{ v122MarkSaved(); }catch(_){}
+      closeModal();
+      toast('Compteur '+label+' supprimé.','success');
+    }catch(e){
+      console.error('v332 suppression',e);
+      closeModal();
+      toast('Suppression impossible : '+((e&&e.message)||e)+' — aucune donnée n’a été modifiée.','error');
+    }finally{ busy=false; }
+  }
+
+  window.v332DeleteMeter=openConfirm;
+  window.v332Test={doDelete:doDelete};
+})();
+</script>
+
+<script id="v333-js">
+/* V333/V334 — Surlignage orange MANUEL de la carte compteur de l'écran de saisie, par appui long.
+   Indépendant de « Remplacement » (m.v290Prev) : drapeau m.manualHighlight dans l'enregistrement du compteur
+   (clé stable EAU::n° / ELEC::n°), donc jamais lié à la position. Orange = Remplacement OU surlignage manuel. */
+(function(){
+  var LONG=550, MOVE=10, timer=null, press=null, swallowUntil=0;
+  function toast(t,k){ try{ showToast(t,k||'info'); }catch(_){} }
+  function cancel(){ clearTimeout(timer); timer=null; press=null; }
+  function cur(){ try{ return (Array.isArray(filteredMeters)&&currentIndex>=0)?filteredMeters[currentIndex]:null; }catch(_){ return null; } }
+  function card(){ return document.getElementById('meterTopCard'); }
+  function sync(){
+    var c=card(); if(!c) return; var m=cur(); var on=!!(m&&(m.v290Prev||m.manualHighlight));
+    if(c.classList.contains('v332-moved')!==on) c.classList.toggle('v332-moved',on);
+  }
+  async function persist(m){
+    try{
+      var db=await openDataDB();
+      var rec=Object.assign({},normalizeMeter(m),{id:meterDBId(m)});
+      await new Promise(function(resolve,reject){
+        var tx=db.transaction(STORE_METER,'readwrite');
+        tx.objectStore(STORE_METER).put(rec);
+        tx.oncomplete=function(){ resolve(true); };
+        tx.onabort=function(){ reject(tx.error||new Error('Enregistrement annulé')); };
+        tx.onerror=function(){ reject(tx.error||new Error('Erreur d’enregistrement')); };
+      });
+      try{ v122MarkSaved(); }catch(_){}
+      return true;
+    }catch(e){ try{ v122MarkSaveFailed(); }catch(_){} return false; }
+  }
+  async function fire(m){
+    if(!m) return;
+    swallowUntil=Date.now()+700;
+    try{ if(navigator.vibrate) navigator.vibrate(25); }catch(_){}
+    var was=!!m.manualHighlight;
+    if(was) delete m.manualHighlight; else m.manualHighlight=true;
+    sync();
+    var ok=await persist(m);
+    if(!ok){
+      if(was) m.manualHighlight=true; else delete m.manualHighlight;
+      sync(); toast('Surlignage non enregistré : réessayez.','error'); return;
+    }
+    toast(was?('Surlignage orange retiré — compteur '+(m.meter||'')+(m.v290Prev?' (reste orange : Remplacement actif)':'')):('Compteur '+(m.meter||'')+' surligné en orange'),'info');
+  }
+  function start(e){
+    cancel();
+    try{
+      var t=e.target;
+      // boutons, champs, badge Eau/Élec (qui bascule le fluide) : comportement normal, aucun appui long
+      if(t&&t.closest&&t.closest('button,a,input,select,textarea,label,.entry-status-pill,.v125-tour-row')) return;
+      if(e.pointerType==='mouse'&&e.button!==0) return;
+    }catch(_){}
+    var m=cur(); if(!m) return;
+    press={x:e.clientX,y:e.clientY,m:m};
+    timer=setTimeout(function(){ var p=press; timer=null; press=null; if(p&&cur()===p.m) fire(p.m); },LONG);
+  }
+  function bind(){
+    var c=card(); if(!c||c._v334) return false; c._v334=true;
+    c.addEventListener('pointerdown',start,true);
+    ['pointerup','pointercancel','pointerleave'].forEach(function(t){ c.addEventListener(t,cancel,true); });
+    c.addEventListener('contextmenu',function(e){ e.preventDefault(); });
+    // Défilement / déplacement du doigt : annulation (aucune interférence avec le scroll vertical)
+    document.addEventListener('pointermove',function(e){ if(press&&(Math.abs(e.clientX-press.x)>MOVE||Math.abs(e.clientY-press.y)>MOVE)) cancel(); },true);
+    document.addEventListener('scroll',function(){ if(press) cancel(); },true);
+    document.addEventListener('touchmove',function(){ if(press) cancel(); },{capture:true,passive:true});
+    // Le relâchement après l'appui long ne doit rien activer (copie du n°, copie du contrat…).
+    c.addEventListener('click',function(e){ if(Date.now()<swallowUntil){ e.stopPropagation(); e.preventDefault(); } },true);
+    // Resynchronisation : changement de compteur, rendu de la carte, Remplacement posé/retiré.
+    try{
+      var mo=new MutationObserver(sync);
+      mo.observe(c,{attributes:true,attributeFilter:['class']});
+      var mn=document.getElementById('meterNum'); if(mn) mo.observe(mn,{childList:true,characterData:true,subtree:true});
+    }catch(_){}
+    setInterval(sync,600);
+    sync();
+    return true;
+  }
+  function init(){ if(!bind()) setTimeout(init,300); }
+  if(document.readyState==='loading') document.addEventListener('DOMContentLoaded',init); else init();
+  window.v333Test={fire:fire,sync:sync};
+})();
+</script>
+
+<script id="v336-js">
+/* V336 — Filet de sécurité : si le bouton chiffres ⇄ lettres (V281) n'a pas été créé pour la recherche de compteur, on le crée ici
+   (même fonctionnement : inputmode numeric par défaut, bascule text via blur()/focus()). Sans effet s'il existe déjà. */
+(function(){
+  function ensure(){
+    var inp=document.getElementById('entrySearchInput'); if(!inp) return;
+    var par=inp.parentNode; if(!par||inp._v281||par.querySelector('.v281-kb')) return;
+    inp._v281=true;
+    var wrap=document.createElement('div'); wrap.className='v281-wrap'; wrap.style.width='100%';
+    par.insertBefore(wrap,inp); wrap.appendChild(inp);
+    var btn=document.createElement('button'); btn.type='button'; btn.className='v281-kb';
+    function setMode(abc){
+      inp.setAttribute('inputmode',abc?'text':'numeric'); inp.setAttribute('enterkeyhint','search');
+      btn.textContent=abc?'ABC':'123'; btn.classList.toggle('abc',abc); inp._v281abc=abc;
+      btn.setAttribute('aria-label',abc?'Clavier lettres actif — passer aux chiffres':'Clavier chiffres actif — passer aux lettres');
+    }
+    btn.addEventListener('pointerdown',function(e){ e.preventDefault(); });
+    btn.addEventListener('click',function(e){
+      e.preventDefault(); e.stopPropagation();
+      setMode(!inp._v281abc);
+      var v=inp.value, a=inp.selectionStart, b=inp.selectionEnd;
+      inp._v336sw=true;
+      try{ inp.blur(); }catch(_){}
+      setTimeout(function(){ try{ inp.focus(); }catch(_){} try{ if(a!=null) inp.setSelectionRange(a,b); }catch(_){} setTimeout(function(){ inp._v336sw=false; },250); },40);
+    });
+    wrap.appendChild(btn); setMode(false);
+    inp.addEventListener('focus',function(){ if(String(inp.value||'')===''&&inp._v281abc&&!inp._v336sw) setMode(false); });
+  }
+  function init(){ setTimeout(ensure,1200); }
   if(document.readyState==='loading') document.addEventListener('DOMContentLoaded',init); else init();
 })();
 </script>

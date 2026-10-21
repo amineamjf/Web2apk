@@ -2,7 +2,7 @@
    - Pré-cache l'app + les 5 bibliothèques CDN au premier lancement EN LIGNE.
    - Ensuite tout fonctionne sans connexion (cache d'abord).
    - Mise à jour MANUELLE uniquement : bouton « Vérifier les mises à jour » (message CHECK_FOR_UPDATE). */
-const CACHE = 'smartrv-cache-v56';
+const CACHE = 'smartrv-cache-v57';
 const CORE = ['./', './index.html', './manifest.json', './icon-192.png', './icon-512.png', './sidikacem-map.json'];
 const CDN = [
   'https://cdn.tailwindcss.com',
@@ -14,6 +14,29 @@ const CDN = [
   'https://unpkg.com/leaflet@1.9.4/dist/leaflet.js'
 ];
 const TILES = 'smartrv-tiles-v1';
+
+// V333 : téléchargement d'une bibliothèque CDN. D'abord en mode « cors » (la réponse est vérifiable : seul un HTTP 200 est mis en cache),
+// puis en « no-cors » (réponse opaque) si l'hôte n'envoie pas d'en-têtes CORS.
+async function fetchCdn(u) {
+  try { const r = await fetch(u, { mode: 'cors', cache: 'reload' }); if (r && r.ok) return r; } catch (_) {}
+  try { const r = await fetch(new Request(u, { mode: 'no-cors' })); if (r && (r.ok || r.type === 'opaque')) return r; } catch (_) {}
+  return null;
+}
+// V333 : complète le cache avec tout fichier manquant (appelé à l'activation et à chaque ouverture de l'app en ligne).
+async function ensureCache() {
+  const cache = await caches.open(CACHE);
+  let added = 0;
+  for (const u of CDN) {
+    if (await cache.match(u)) continue;
+    const r = await fetchCdn(u);
+    if (r) { try { await cache.put(u, r); added++; } catch (_) {} }
+  }
+  for (const u of CORE) {
+    if (await cache.match(u)) continue;
+    try { const r = await fetch(new Request(u, { cache: 'reload' })); if (r && r.ok) { await cache.put(u, r); added++; } } catch (_) {}
+  }
+  return added;
+}
 const CDN_HOSTS = ['cdn.tailwindcss.com', 'cdn.jsdelivr.net', 'cdnjs.cloudflare.com', 'fonts.googleapis.com', 'fonts.gstatic.com', 'unpkg.com'];
 
 self.addEventListener('install', (event) => {
@@ -25,10 +48,8 @@ self.addEventListener('install', (event) => {
     const fromOld = async (u) => { for (const k of old) { const h = await (await caches.open(k)).match(u); if (h) return h; } return null; };
     await Promise.allSettled(CDN.map(async (u) => {
       if (await cache.match(u)) return;
-      try {
-        const res = await fetch(new Request(u, { mode: 'no-cors' }));
-        if (res && (res.ok || res.type === 'opaque')) { await cache.put(u, res); return; }
-      } catch (_) {}
+      const res = await fetchCdn(u);
+      if (res) { try { await cache.put(u, res); return; } catch (_) {} }
       const h = await fromOld(u); if (h) await cache.put(u, h);
     }));
     await Promise.allSettled(CORE.map(async (u) => {
@@ -44,6 +65,7 @@ self.addEventListener('activate', (event) => {
     const keys = await caches.keys();
     await Promise.all(keys.filter((k) => k !== CACHE && k !== TILES).map((k) => caches.delete(k)));
     await self.clients.claim();
+    ensureCache().catch(() => {}); // sans attendre : ne retarde pas l'activation (le message ENSURE_CACHE de la page complète aussi)
   })());
 });
 
@@ -101,6 +123,7 @@ async function checkForUpdate(client) {
 
 self.addEventListener('message', (event) => {
   if (event.data === 'CHECK_FOR_UPDATE') event.waitUntil(checkForUpdate(event.source));
+  else if (event.data === 'ENSURE_CACHE') event.waitUntil(ensureCache().catch(() => 0));
   else if (event.data === 'SKIP_WAITING') self.skipWaiting();
 });
 
