@@ -2,10 +2,9 @@
    - Pré-cache l'app + les 5 bibliothèques CDN au premier lancement EN LIGNE.
    - Ensuite tout fonctionne sans connexion (cache d'abord).
    - Mise à jour MANUELLE uniquement : bouton « Vérifier les mises à jour » (message CHECK_FOR_UPDATE). */
-const CACHE = 'smartrv-cache-v57';
+const CACHE = 'smartrv-cache-v58';
 const CORE = ['./', './index.html', './manifest.json', './icon-192.png', './icon-512.png', './sidikacem-map.json'];
 const CDN = [
-  'https://cdn.tailwindcss.com',
   'https://cdn.jsdelivr.net/npm/xlsx-js-style@1.2.0/dist/xlsx.bundle.js',
   'https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js',
   'https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js',
