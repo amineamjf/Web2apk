@@ -2,7 +2,10 @@
    - Pré-cache l'app + les 5 bibliothèques CDN au premier lancement EN LIGNE.
    - Ensuite tout fonctionne sans connexion (cache d'abord).
    - Mise à jour MANUELLE uniquement : bouton « Vérifier les mises à jour » (message CHECK_FOR_UPDATE). */
-const CACHE = 'smartrv-cache-v59';
+const CACHE = 'smartrv-cache-v60';
+// Dans l'APK (Capacitor), les fichiers de l'app sont locaux : on les lit TOUJOURS en premier depuis l'APK,
+// sinon une mise à jour installée par-dessus l'ancienne version resterait bloquée sur l'ancien index.html en cache.
+const NATIVE = self.location.hostname === 'localhost';
 const CORE = ['./', './index.html', './manifest.json', './icon-192.png', './icon-512.png', './android-bridge.js', './sidikacem-map.json'];
 const CDN = [
   'https://cdn.jsdelivr.net/npm/xlsx-js-style@1.2.0/dist/xlsx.bundle.js',
@@ -81,6 +84,12 @@ self.addEventListener('fetch', (event) => {
 
 async function navigate(req) {
   const cache = await caches.open(CACHE);
+  if (NATIVE) {
+    try {
+      const res = await fetch(req);
+      if (res && res.ok) { cache.put('./index.html', res.clone()); return res; }
+    } catch (_) {}
+  }
   const hit = (await cache.match('./index.html')) || (await cache.match('./'));
   if (hit) return hit;
   try {
@@ -94,6 +103,12 @@ async function navigate(req) {
 
 async function cacheFirst(req, same) {
   const cache = await caches.open(CACHE);
+  if (NATIVE && same) {
+    try {
+      const res = await fetch(req);
+      if (res && res.ok) { cache.put(req, res.clone()); return res; }
+    } catch (_) {}
+  }
   const hit = await cache.match(req, { ignoreSearch: same });
   if (hit) return hit;
   try {

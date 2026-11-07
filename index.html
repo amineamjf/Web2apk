@@ -12138,7 +12138,7 @@ html body.v176-hide-prev.v176-hide-prev #entryPage .entry-previous-box{display:n
     '#v200Ed button:disabled{opacity:.35;}'+
     '#v200Ed .dot{width:28px;height:28px;min-width:28px;padding:0;border-radius:50%;border:2px solid rgba(255,255,255,.45);}'+
     '#v200Ed .dot.sel{box-shadow:0 0 0 3px #fff;}'+
-    '#v200Ed .save{flex:1;background:#0f766e;}#v200Ed .wa{flex:1.4;background:#16a34a;}'+
+    '#v200Ed .save{flex:1;background:#0f766e;}#v200Ed .wa{flex:1.4;background:#16a34a;}#v200Ed .rep{flex:1.2;background:#2563eb;}'+
     '#v200Ed .stage{flex:1;min-height:0;display:flex;align-items:center;justify-content:center;overflow:hidden;position:relative;}'+
     '#v200Ed .wrap{position:relative;}#v200Ed canvas{position:absolute;left:0;top:0;}#v200Ed .ov{touch-action:none;}'+
     '#v200Ed .apply{position:absolute;bottom:12px;left:50%;transform:translateX(-50%);background:#f59e0b;color:#111;}';
@@ -12335,6 +12335,7 @@ html body.v176-hide-prev.v176-hide-prev #entryPage .entry-previous-box{display:n
         '<button class="apply" data-a="apply" hidden>✓ Rogner</button></div>'+
       '<div class="bar b">'+
         '<button class="del" data-a="del" aria-label="Supprimer la photo">🗑</button>'+
+        '<button class="rep" data-a="rep" aria-label="Remplacer la photo">📷 Remplacer</button>'+
         '<button class="save" data-a="save">✓ Garder</button>'+
         '<button class="wa" data-a="wa">📤 WhatsApp</button>'+
       '</div>';
@@ -12448,6 +12449,7 @@ html body.v176-hide-prev.v176-hide-prev #entryPage .entry-previous-box{display:n
       try{ saveCurrentInputs(); }catch(_){}
       try{ await persistCurrentMeter(S.m); }catch(e){ console.error('v200 persist',e); }
       try{ if(filteredMeters[currentIndex]===S.m) document.getElementById('cameraPhotoBadge').classList.remove('hidden'); }catch(_){}
+      try{ if(window.v340RefreshThumb) window.v340RefreshThumb(); }catch(_){}
     }
     async function doSave(){            // « Garder » : enregistre seulement s'il y a eu des modifications
       if(S.busy) return; S.busy=true;
@@ -12463,6 +12465,17 @@ html body.v176-hide-prev.v176-hide-prev #entryPage .entry-previous-box{display:n
       try{ await persistCurrentMeter(S.m); }catch(e){ console.error('v200 delete',e); }
       try{ if(filteredMeters[currentIndex]===S.m) document.getElementById('cameraPhotoBadge').classList.add('hidden'); }catch(_){}
       toast('Photo supprimée.','success'); closeEditor();
+      try{ if(window.v340RefreshThumb) window.v340RefreshThumb(); }catch(_){}
+    }
+    // « Remplacer » : ferme l'éditeur et rouvre l'appareil photo ; la nouvelle photo écrase l'ancienne
+    // et l'éditeur se rouvre automatiquement dessus (voir le wrapper de capturePhoto plus bas).
+    function doReplace(){
+      if(S.busy) return;
+      var m=S.m;
+      closeEditor();
+      window.__v224SkipEditor=false; window.__v224PendingSend=false;
+      try{ window.__photoMeter=m; (window.openMeterCamera||openMeterCamera)(); }
+      catch(e){ toast('Caméra indisponible.'); }
     }
     async function doShare(){
       if(S.busy) return; S.busy=true;
@@ -12504,6 +12517,7 @@ html body.v176-hide-prev.v176-hide-prev #entryPage .entry-previous-box{display:n
       else if(a==='save') doSave();
       else if(a==='wa') doShare();
       else if(a==='del') doDelete();
+      else if(a==='rep') doReplace();
     });
     layout();
   }
@@ -12783,6 +12797,57 @@ html body #entryPage #cameraPhotoBadge{top:-6px!important;right:-6px!important}
       return r;
     };
   }
+})();
+</script>
+
+<style id="v340-style">
+#v340Thumb{display:none;align-items:center;gap:12px;margin:10px 0 2px;padding:8px;border:1px solid #e2e8f0;border-radius:14px;background:#f8fafc;color:#0f172a;cursor:pointer;-webkit-tap-highlight-color:transparent;font-family:system-ui,sans-serif}
+#v340Thumb.on{display:flex}
+#v340Thumb img{width:92px;height:92px;object-fit:cover;border-radius:10px;flex:none;background:#e2e8f0}
+#v340Thumb .t{font-weight:800;font-size:13px;line-height:1.3}
+#v340Thumb .s{font-weight:600;font-size:11px;line-height:1.35;color:#64748b;margin-top:3px}
+.dark-mode #v340Thumb,body.dark-mode #v340Thumb{background:#24231f;border-color:#37352f;color:#f1efe7}
+.dark-mode #v340Thumb .s,body.dark-mode #v340Thumb .s{color:#a5a398}
+#v200Ed .bar.b{gap:6px}
+#v200Ed .bar.b button{padding:0 8px;font-size:13px;min-width:0}
+</style>
+<script id="v340-photo-thumb">
+/* V340 — miniature de la photo dans la carte du compteur : un appui l'ouvre en grand (rogner / remplacer / supprimer / WhatsApp). */
+(function(){
+  'use strict';
+  function cur(){ try{ return Array.isArray(filteredMeters)?filteredMeters[currentIndex]:null; }catch(_){ return null; } }
+  function ensure(){
+    var t=document.getElementById('v340Thumb'); if(t) return t;
+    var h=document.getElementById('customerContactActions'); if(!h||!h.parentNode) return null;
+    t=document.createElement('div'); t.id='v340Thumb'; t.setAttribute('role','button'); t.setAttribute('aria-label','Agrandir la photo du compteur');
+    t.innerHTML='<img alt="Photo du compteur"><div><div class="t">Photo du compteur</div><div class="s">Appuyez pour agrandir, rogner, remplacer ou supprimer</div></div>';
+    t.addEventListener('click',function(e){
+      e.preventDefault(); e.stopPropagation();
+      var m=cur(); if(m&&m.photo&&typeof window.v200OpenPhotoEditor==='function') window.v200OpenPhotoEditor(m);
+    });
+    h.parentNode.insertBefore(t,h);
+    return t;
+  }
+  window.v340RefreshThumb=function(){
+    try{
+      var t=ensure(); if(!t) return;
+      var m=cur(), img=t.querySelector('img');
+      if(m&&m.photo){ if(img.getAttribute('data-k')!==String(m.photo.length)+':'+m.photo.slice(-24)){ img.src=m.photo; img.setAttribute('data-k',String(m.photo.length)+':'+m.photo.slice(-24)); } t.classList.add('on'); }
+      else{ t.classList.remove('on'); img.removeAttribute('src'); img.removeAttribute('data-k'); }
+    }catch(e){ console.warn('v340',e); }
+  };
+  ['renderCurrentMeter','capturePhoto'].forEach(function(name){
+    var f=window[name]; if(typeof f!=='function') return;
+    window[name]=function(){
+      var r=f.apply(this,arguments);
+      try{ Promise.resolve(r).then(function(){ window.v340RefreshThumb(); },function(){}); }catch(_){}
+      try{ window.v340RefreshThumb(); }catch(_){}
+      return r;
+    };
+  });
+  if(document.readyState==='loading') document.addEventListener('DOMContentLoaded',function(){ window.v340RefreshThumb(); });
+  else window.v340RefreshThumb();
+  setTimeout(window.v340RefreshThumb,600);
 })();
 </script>
 
@@ -14778,11 +14843,12 @@ window.openCarte=openCarte;window.closeCarte=closeCarte;window.SmartCarte={C:C,p
   window.v295Stamp=async function(src,m){
     try{
       var blob=(typeof src==='string')?dataToBlob(src):src; if(!blob) return null;
-      var meter=clean(m&&m.meter), contract=contractOf(m); if(!meter&&!contract) return blob;
+      var meter=clean(m&&m.meter), contract=contractOf(m), cname=clean(m&&m.name), caddr=clean(m&&m.address);
+      if(!meter&&!contract&&!cname&&!caddr) return blob;
       var bm=await toBitmap(blob), W=bm.width, H=bm.height; if(!W||!H) return blob;
       var sc=Math.min(1,3200/Math.max(W,H)), w=Math.round(W*sc), h=Math.round(H*sc);
-      var l1=Math.round(Math.max(30,w*0.058)), l2=Math.round(l1*0.7), pad=Math.round(l1*0.42);
-      var bandH=pad*2+l1+(contract?Math.round(l2*1.3):0);
+      var l1=Math.round(Math.max(30,w*0.058)), l2=Math.round(l1*0.7), l3=Math.round(l1*0.55), pad=Math.round(l1*0.42);
+      var bandH=pad*2+l1+(contract?Math.round(l2*1.3):0)+(cname?Math.round(l3*1.35):0)+(caddr?Math.round(l3*1.35):0);
       var cv=document.createElement('canvas'); cv.width=w; cv.height=h+bandH; var ctx=cv.getContext('2d');
       ctx.fillStyle='#000'; ctx.fillRect(0,0,w,h+bandH);
       ctx.drawImage(bm.img||bm,0,0,w,h);
@@ -14791,9 +14857,20 @@ window.openCarte=openCarte;window.closeCarte=closeCarte;window.SmartCarte={C:C,p
       ctx.textBaseline='top'; var x=Math.round(w*0.035), mw=w-2*x, y=h+pad;
       var s1=fit(ctx,'Compteur  '+meter,'800 {s}px Arial, Helvetica, sans-serif',mw,l1);
       ctx.font='800 '+s1+'px Arial, Helvetica, sans-serif'; ctx.fillStyle='#ffffff'; ctx.fillText('Compteur  '+meter,x,y);
+      var yy=y+s1;
       if(contract){
         var s2=fit(ctx,'Contrat  '+contract,'700 {s}px Arial, Helvetica, sans-serif',mw,l2);
-        ctx.font='700 '+s2+'px Arial, Helvetica, sans-serif'; ctx.fillStyle='#fde68a'; ctx.fillText('Contrat  '+contract,x,y+s1+Math.round(l2*0.18));
+        ctx.font='700 '+s2+'px Arial, Helvetica, sans-serif'; ctx.fillStyle='#fde68a'; ctx.fillText('Contrat  '+contract,x,yy+Math.round(l2*0.18));
+        yy+=Math.round(l2*1.3);
+      }
+      if(cname){
+        var s3=fit(ctx,'Client  '+cname,'700 {s}px Arial, Helvetica, sans-serif',mw,l3);
+        ctx.font='700 '+s3+'px Arial, Helvetica, sans-serif'; ctx.fillStyle='#e2e8f0'; ctx.fillText('Client  '+cname,x,yy+Math.round(l3*0.2));
+        yy+=Math.round(l3*1.35);
+      }
+      if(caddr){
+        var s4=fit(ctx,'Adresse  '+caddr,'600 {s}px Arial, Helvetica, sans-serif',mw,l3);
+        ctx.font='600 '+s4+'px Arial, Helvetica, sans-serif'; ctx.fillStyle='#cbd5e1'; ctx.fillText('Adresse  '+caddr,x,yy+Math.round(l3*0.2));
       }
       var png=/png/i.test(blob.type||'');
       var out=await new Promise(function(res){ cv.toBlob(res,png?'image/png':'image/jpeg',0.9); });
@@ -14804,8 +14881,9 @@ window.openCarte=openCarte;window.closeCarte=closeCarte;window.SmartCarte={C:C,p
   window.v295On=on;
   // Texte copiable à joindre au message WhatsApp
   window.v295Lines=function(m){
-    var a=[]; var mt=clean(m&&m.meter), ct=contractOf(m);
+    var a=[]; var mt=clean(m&&m.meter), ct=contractOf(m), cn=clean(m&&m.name), ad=clean(m&&m.address);
     if(mt) a.push('Compteur : '+mt); if(ct) a.push('Contrat : '+ct);
+    if(cn) a.push('Client : '+cn); if(ad) a.push('Adresse : '+ad);
     return a.length?('\n'+a.join('\n')):'';
   };
   // Interrupteur dans Relevés → Autres
@@ -14815,7 +14893,7 @@ window.openCarte=openCarte;window.closeCarte=closeCarte;window.SmartCarte={C:C,p
     var zip=null; box.querySelectorAll('.v288-row').forEach(function(b){ if(/exportToZip/.test(b.getAttribute('onclick')||'')) zip=b; });
     var b=document.createElement('button'); b.type='button'; b.id='v295Row'; b.className='v288-row';
     b.innerHTML='<span class="v288-ic"><svg viewBox="0 0 24 24"><rect x="3.5" y="5" width="17" height="14" rx="2.5"/><path d="M3.5 15h17M7 17.2h6"/></svg></span><span class="v288-row-t"><b>Bandeau sur les photos</b><small id="v295St"></small></span>';
-    function paint(){ var s=b.querySelector('#v295St'); if(s) s.textContent=on()?'Activé · N° compteur + contrat sur les photos exportées':'Désactivé · photos exportées sans bandeau'; }
+    function paint(){ var s=b.querySelector('#v295St'); if(s) s.textContent=on()?'Activé · compteur, contrat, client et adresse sur les photos exportées':'Désactivé · photos exportées sans bandeau'; }
     b.addEventListener('click',function(){ setOn(!on()); paint(); try{ showToast(on()?'Bandeau activé.':'Bandeau désactivé.','success'); }catch(_){} });
     paint();
     if(zip&&zip.parentNode) zip.parentNode.insertBefore(b,zip.nextSibling); else box.appendChild(b);
