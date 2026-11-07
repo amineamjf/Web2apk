@@ -1,6 +1,6 @@
 {
-  "appId": "com.smartrv.app",
-  "appName": "Smart RV",
+  "appId": "com.smartrv.app2",
+  "appName": "Smart RV 2",
   "webDir": "www",
   "android": { "allowMixedContent": true }
 }

@@ -59,9 +59,12 @@ jobs:
       - name: Native plugin, fixed signing key and version number
         run: |
           # 1) Plugin natif « SaveFile » : enregistre les exports dans Téléchargements/SmartRV
-          pkg=android/app/src/main/java/com/smartrv/app
+          APPID=$(node -p "require('./capacitor.config.json').appId")
+          pkg=android/app/src/main/java/$(echo "$APPID" | tr . /)
           mkdir -p "$pkg"
           cp native/SaveFilePlugin.java native/MainActivity.java "$pkg/"
+          sed -i "s/^package .*;/package $APPID;/" "$pkg/SaveFilePlugin.java" "$pkg/MainActivity.java"
+          grep -n "^package" "$pkg"/*.java
           # 2) Clé de signature FIXE : même signature à chaque build => Android accepte la mise à jour
           #    par-dessus l'ancienne version sans désinstaller (sinon : « Conflit avec un package existant »)
           mkdir -p ~/.android
