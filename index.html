@@ -1228,6 +1228,8 @@
                 <button type="button" class="side-menu-btn" onclick="closeEntrySideMenu(); setTimeout(openAutoBackups, 80);"><span class="side-menu-icon" aria-hidden="true">🛟</span><span>Sauvegardes automatiques</span></button>
                 <div id="autoBackupInfo" class="side-menu-session-user"></div>
                 <div id="backupLastInfo" class="side-menu-session-user"></div>
+                <button type="button" class="side-menu-btn" onclick="closeEntrySideMenu(); setTimeout(openAutoFileSettings, 80);"><span class="side-menu-icon" aria-hidden="true">📲</span><span>Sauvegarde auto sur le téléphone</span></button>
+                <div data-autofile-info class="side-menu-session-user"></div>
                 <button type="button" class="side-menu-btn" onclick="closeEntrySideMenu(); setTimeout(openChangelogModal, 80);"><span class="side-menu-icon" aria-hidden="true">ℹ️</span><span>À propos / Historique des versions</span></button>
             </div>
             <div class="side-menu-section">
@@ -1373,6 +1375,7 @@
                 <div class="records-action-grid">
                     <button type="button" onclick="backupDataJSON()" class="action-card primary"><span class="action-icon"><svg class="ic" aria-hidden="true"><use href="#i-save"/></svg></span><span class="action-copy"><strong>Sauvegarder</strong><small>Conserver une copie complète</small></span><span class="action-arrow">›</span></button>
                     <label class="action-card soft-indigo" for="backupFileInput" onclick="restoreDataJSON(event)"><span class="action-icon"><svg class="ic" aria-hidden="true"><use href="#i-folder-open"/></svg></span><span class="action-copy"><strong>Restaurer</strong><small>Récupérer une tournée enregistrée</small></span><span class="action-arrow">›</span><input type="file" id="backupFileInput" accept=".json,application/json,text/plain,*/*" class="hidden"></label><div id="v106-apk-note" style="grid-column:1/-1;font-size:10px;color:#64748b;text-align:center;padding:4px 8px">Compatible APK : partage/téléchargement et import JSON de secours si le WebView bloque les fichiers.</div>
+                    <button type="button" onclick="openAutoFileSettings()" class="action-card soft-green span-2"><span class="action-icon"><svg class="ic" aria-hidden="true"><use href="#i-save"/></svg></span><span class="action-copy"><strong>Sauvegarde automatique sur le téléphone</strong><small data-autofile-info>Toutes les 30 min dans Téléchargements › SmartRV</small></span><span class="action-arrow">›</span></button>
                 </div>
             </div>
             <div class="records-action-section">
@@ -6708,18 +6711,24 @@
                 } catch (e) { reject(e); }
             });
         }
+        // V341 : lecture de la sauvegarde complète isolée dans une fonction, partagée par l'export manuel
+        // et par la sauvegarde automatique vers le téléphone (même format, restaurable de la même façon).
+        async function buildFullBackupObject() {
+            const db = await openDataDB();
+            const [meters, gpsTrack, settings, history] = await Promise.all([
+                dbGetAll(db, STORE_METER), dbGetAll(db, STORE_TRACK),
+                dbGetAll(db, STORE_SETTINGS), dbGetAll(db, STORE_HISTORY)
+            ]);
+            const localKeys = ['smartrv_local_auth', 'SmartRV_TourName'];
+            const local = {};
+            localKeys.forEach(k => { try { const v = localStorage.getItem(k); if (v !== null) local[k] = v; } catch (_) {} });
+            return { app: 'SmartRV', schema: 1, exportedAt: new Date().toISOString(), meters, gpsTrack, settings, history, local };
+        }
         async function exportFullBackup() {
             setBusy(true, 'Sauvegarde', 'Préparation de la sauvegarde complète…');
             try {
-                const db = await openDataDB();
-                const [meters, gpsTrack, settings, history] = await Promise.all([
-                    dbGetAll(db, STORE_METER), dbGetAll(db, STORE_TRACK),
-                    dbGetAll(db, STORE_SETTINGS), dbGetAll(db, STORE_HISTORY)
-                ]);
-                const localKeys = ['smartrv_local_auth', 'SmartRV_TourName'];
-                const local = {};
-                localKeys.forEach(k => { try { const v = localStorage.getItem(k); if (v !== null) local[k] = v; } catch (_) {} });
-                const backup = { app: 'SmartRV', schema: 1, exportedAt: new Date().toISOString(), meters, gpsTrack, settings, history, local };
+                const backup = await buildFullBackupObject();
+                const { meters, history } = backup;
                 const blob = new Blob([JSON.stringify(backup)], { type: 'application/json' });
                 const url = URL.createObjectURL(blob);
                 const a = document.createElement('a');
@@ -8490,8 +8499,11 @@ else startMap();
             const blob = new Blob([json], {type: 'application/json;charset=utf-8'});
 
             // 1) Sur Android/WebView modernes: proposer directement le partage du fichier.
+            // V341 : dans l'APK, on enregistre d'abord le fichier (carte « Fichier enregistré » avec Ouvrir / Partager)
+            // au lieu d'ouvrir directement la feuille de partage.
+            const isNativeApk = !!(window.Capacitor && typeof window.Capacitor.isNativePlatform === 'function' && window.Capacitor.isNativePlatform());
             try {
-                if (navigator.share && typeof File !== 'undefined') {
+                if (!isNativeApk && navigator.share && typeof File !== 'undefined') {
                     const file = new File([blob], name, {type:'application/json'});
                     if (!navigator.canShare || navigator.canShare({files:[file]})) {
                         await navigator.share({title:'Sauvegarde Smart Reader Pro', text:'Base de données Smart Reader Pro', files:[file]});
@@ -16309,6 +16321,170 @@ html body.dark-mode #entryPage.v296.v331 #meterTopCard.v332-moved .entry-contrac
   }
   function init(){ setTimeout(ensure,1200); }
   if(document.readyState==='loading') document.addEventListener('DOMContentLoaded',init); else init();
+})();
+</script>
+<script id="v341-autosave-file">
+/* V341 — Sauvegarde AUTOMATIQUE vers le téléphone (APK uniquement).
+   Écrit une copie complète (même format que « Exporter une sauvegarde complète ») dans
+   Téléchargements/SmartRV, toutes les 10 / 20 / 30 min ou 1 h selon le choix.
+   Deux fichiers qui s'alternent (SmartRV_AUTO_1.json / _2.json) : si l'écriture est interrompue,
+   l'autre copie reste intacte. Silencieux : aucune fenêtre, seule la ligne d'état est mise à jour.
+   Restauration : « Restaurer une sauvegarde » (même fichier JSON). Module additif : ne change rien d'autre. */
+(function(){
+'use strict';
+var KEY_MIN='smartrv_autofile_min',     // intervalle en minutes (0 = désactivé)
+    KEY_LAST='smartrv_autofile_last',   // dernière copie réellement écrite
+    KEY_CHECK='smartrv_autofile_check', // dernier contrôle (écrit ou « rien de changé »)
+    KEY_SLOT='smartrv_autofile_slot',   // dernier fichier utilisé (1 ou 2)
+    KEY_SIG='smartrv_autofile_sig',     // empreinte de la dernière copie
+    KEY_NAME='smartrv_autofile_name';
+var DEFAULT_MIN=30, PREFIX_JSON='{"app":"SmartRV","schema":1,"exportedAt":""';
+var S={busy:false,failAt:0,lastErr:'',inited:false,hiddenAt:0};
+var $=function(id){return document.getElementById(id);};
+function ls(k){ try{ return localStorage.getItem(k); }catch(_){ return null; } }
+function lset(k,v){ try{ localStorage.setItem(k,String(v)); }catch(_){} }
+function isNative(){ return !!(window.SmartRVFiles && window.SmartRVFiles.available); }
+function getMin(){ var v=ls(KEY_MIN); if(v===null||v==='') return DEFAULT_MIN; var n=Number(v); return (isFinite(n)&&n>=0)?n:DEFAULT_MIN; }
+function setMin(n){ lset(KEY_MIN,n); updateInfo(); }
+function hhmm(ts){ try{ return new Date(ts).toLocaleTimeString('fr-FR',{hour:'2-digit',minute:'2-digit'}); }catch(_){ return ''; } }
+function dayLabel(ts){ try{ var d=new Date(ts), n=new Date(); return d.toDateString()===n.toDateString()?'aujourd’hui':d.toLocaleDateString('fr-FR',{day:'2-digit',month:'2-digit'}); }catch(_){ return ''; } }
+function minLabel(m){ return m===0?'Désactivée':(m===60?'1 heure':(m+' min')); }
+function fnv(str){ var h=0x811c9dc5; for(var i=0;i<str.length;i++){ h^=str.charCodeAt(i); h=Math.imul(h,0x01000193); } return (h>>>0).toString(16); }
+
+/* ---------- ligne d'état (menu latéral + page Registres) ---------- */
+function statusText(){
+  if(!isNative()) return 'Disponible dans l’application Android (APK).';
+  var m=getMin(); if(!m) return 'Sauvegarde automatique désactivée.';
+  var last=Number(ls(KEY_LAST)||0);
+  var base='Toutes les '+(m===60?'heure':(m+' min'));
+  if(S.lastErr) return base+' · ⚠️ dernière tentative échouée';
+  return last? (base+' · dernière copie '+dayLabel(last)+' '+hhmm(last)) : (base+' · première copie bientôt');
+}
+function updateInfo(){
+  try{ document.querySelectorAll('[data-autofile-info]').forEach(function(e){ e.textContent=statusText(); }); }catch(_){}
+  try{ if(typeof render==='function' && $('autoFileModal')) render(); }catch(_){}
+}
+
+/* ---------- écriture ---------- */
+// opts.force : écrire même si rien n'a changé ; opts.explicit : bouton « maintenant » (affiche la carte Ouvrir/Partager)
+async function doSave(opts){
+  opts=opts||{};
+  if(S.busy) return {skipped:'busy'};
+  if(!isNative()) return {skipped:'web'};
+  if(typeof buildFullBackupObject!=='function') return {skipped:'nofn'};
+  S.busy=true; updateInfo();
+  try{
+    var backup=await buildFullBackupObject();
+    // Sécurité : jamais d'écrasement d'une bonne copie par des données vides.
+    if(!backup.meters||!backup.meters.length){ lset(KEY_CHECK,Date.now()); return {skipped:'empty'}; }
+    var iso=backup.exportedAt; backup.exportedAt='';
+    var json=JSON.stringify(backup); backup=null;
+    var sig=fnv(json)+':'+json.length;
+    if(!opts.force && sig===ls(KEY_SIG)){ lset(KEY_CHECK,Date.now()); return {skipped:'same'}; }
+    var body=(json.indexOf(PREFIX_JSON)===0)?json.slice(PREFIX_JSON.length):null;
+    var blob=body!==null
+      ? new Blob(['{"app":"SmartRV","schema":1,"exportedAt":"'+iso+'"',body],{type:'application/json'})
+      : new Blob([json],{type:'application/json'});
+    json=null; body=null;
+    var slot=(ls(KEY_SLOT)==='1')?'2':'1';
+    var name='SmartRV_AUTO_'+slot+'.json';
+    var info=await window.SmartRVFiles.saveBlob(blob,name,{silent:!opts.explicit,overwrite:true});
+    if(!info) throw new Error('Fichier non enregistré (partage annulé ou indisponible).');
+    var now=Date.now();
+    lset(KEY_LAST,now); lset(KEY_CHECK,now); lset(KEY_SLOT,slot); lset(KEY_SIG,sig); lset(KEY_NAME,name);
+    lset('smartrv_last_backup_at',new Date(now).toISOString()); // évite le rappel « sauvegarde fichier : jamais »
+    try{ if(typeof updateBackupInfoLabel==='function') updateBackupInfoLabel(); }catch(_){}
+    S.lastErr=''; S.failAt=0;
+    return {ok:true,info:info,name:name};
+  }catch(e){
+    S.lastErr=String((e&&e.message)||e); S.failAt=Date.now();
+    console.warn('autofile',e);
+    return {error:S.lastErr};
+  }finally{ S.busy=false; updateInfo(); }
+}
+
+function due(){
+  var m=getMin(); if(!m) return false;
+  var ref=Math.max(Number(ls(KEY_LAST)||0),Number(ls(KEY_CHECK)||0));
+  return (Date.now()-ref)>=m*60000;
+}
+function tick(){
+  try{
+    if(S.busy||!isNative()||!due()) return;
+    if(S.failAt && Date.now()-S.failAt<5*60000) return; // pas de nouvel essai en rafale après un échec
+    doSave({});
+  }catch(_){}
+}
+// Avant que l'app parte en arrière-plan (risque d'être fermée par Android) : copie de précaution si ça a changé.
+function flushOnHide(){
+  try{
+    if(S.busy||!isNative()||!getMin()) return;
+    var n=Date.now(); if(n-S.hiddenAt<5*60000) return;
+    var ref=Math.max(Number(ls(KEY_LAST)||0),Number(ls(KEY_CHECK)||0)); if(n-ref<2*60000) return;
+    S.hiddenAt=n; doSave({});
+  }catch(_){}
+}
+
+/* ---------- fenêtre de réglage ---------- */
+var render=null;
+function openSettings(){
+  var old=$('autoFileModal'); if(old) old.remove();
+  var nat=isNative();
+  var md=document.createElement('div'); md.id='autoFileModal';
+  md.style.cssText='position:fixed;inset:0;background:rgba(3,12,24,.7);z-index:10085;display:flex;align-items:flex-end;justify-content:center';
+  md.innerHTML='<div style="width:100%;max-width:480px;max-height:90vh;display:flex;flex-direction:column;background:#fff;border-radius:18px 18px 0 0;overflow:hidden;font-family:inherit">'
+    +'<div style="padding:14px 16px;background:linear-gradient(135deg,#071427,#0f766e);color:#fff"><div style="font-weight:900;font-size:15px">📲 Sauvegarde auto sur le téléphone</div>'
+    +'<div style="font-size:11px;opacity:.92;margin-top:3px;line-height:1.35">Une copie complète est enregistrée toute seule dans <b>Téléchargements › SmartRV</b>, sans fenêtre ni action de votre part.</div></div>'
+    +'<div style="padding:12px 14px;overflow:auto;flex:1;color:#0f172a;font-size:12px">'
+    +'<div style="font-weight:800;margin-bottom:6px">Fréquence</div><div id="afChoices" style="display:flex;flex-wrap:wrap;gap:6px"></div>'
+    +'<div id="afStatus" style="margin-top:12px;padding:10px;border-radius:12px;background:#f1f5f9;font-weight:700;line-height:1.4"></div>'
+    +'<div style="margin-top:10px;color:#475569;line-height:1.45">• Deux fichiers s’alternent : <b>SmartRV_AUTO_1.json</b> et <b>SmartRV_AUTO_2.json</b> (le plus récent écrase le plus ancien).<br>'
+    +'• Rien n’est écrit si rien n’a changé, ni si l’application est vide.<br>'
+    +'• Pour récupérer : menu <b>Restaurer une sauvegarde</b> puis choisir le fichier.</div></div>'
+    +'<div style="padding:8px 14px 16px;display:flex;gap:8px;border-top:1px solid #f1f5f9"><button id="afNow" type="button" style="flex:1.4;border:0;border-radius:12px;padding:12px 8px;background:#0f766e;color:#fff;font-weight:800;font-size:13px">💾 Sauvegarder maintenant</button>'
+    +'<button id="afClose" type="button" style="flex:1;border:0;border-radius:12px;padding:12px 8px;background:#f1f5f9;color:#334155;font-weight:800;font-size:13px">Fermer</button></div></div>';
+  document.body.appendChild(md);
+  md.addEventListener('click',function(e){ if(e.target===md) md.remove(); });
+  $('afClose').onclick=function(){ md.remove(); };
+  render=function(){
+    var box=$('afChoices'), st=$('afStatus'), now=$('afNow'); if(!box||!st) return;
+    var cur=getMin(); box.innerHTML='';
+    [0,10,20,30,60].forEach(function(m){
+      var b=document.createElement('button'); b.type='button'; b.textContent=minLabel(m); b.disabled=!nat;
+      b.style.cssText='border:0;border-radius:12px;padding:10px 14px;font-weight:800;font-size:12px;'+(cur===m?'background:#0f766e;color:#fff':'background:#f1f5f9;color:#334155')+(nat?'':';opacity:.5');
+      b.onclick=function(){ setMin(m); if(m){ lset(KEY_CHECK,0); tick(); } };
+      box.appendChild(b);
+    });
+    var txt=statusText(); var last=Number(ls(KEY_LAST)||0), nm=ls(KEY_NAME);
+    if(nat&&last&&nm) txt+='\nFichier : '+nm;
+    if(S.lastErr) txt+='\n⚠️ '+S.lastErr;
+    st.style.whiteSpace='pre-line'; st.textContent=txt;
+    st.style.background=S.lastErr?'#fef2f2':'#f1f5f9'; st.style.color=S.lastErr?'#b91c1c':'#0f172a';
+    if(now){ now.disabled=!nat||S.busy; now.style.opacity=(!nat||S.busy)?'.6':'1'; now.textContent=S.busy?'⏳ Enregistrement…':'💾 Sauvegarder maintenant'; }
+  };
+  $('afNow').onclick=async function(){
+    var r=await doSave({force:true,explicit:true});
+    if(r&&r.skipped==='empty'){ try{ showToast('Aucun compteur à sauvegarder.','warn'); }catch(_){} }
+    else if(r&&r.error){ try{ showPersistentErrorModal('Sauvegarde impossible',r.error); }catch(_){ alert(r.error); } }
+    render&&render();
+  };
+  render();
+}
+
+function init(){
+  if(S.inited) return; S.inited=true;
+  updateInfo();
+  if(!isNative()) return;
+  setTimeout(tick,45000);          // rattrapage au démarrage si une copie est en retard
+  setInterval(tick,60000);          // contrôle chaque minute (réveil possible même si le minuteur a été suspendu)
+  document.addEventListener('visibilitychange',function(){
+    if(document.visibilityState==='hidden') flushOnHide(); else setTimeout(tick,1500);
+  });
+  window.addEventListener('pagehide',flushOnHide);
+}
+window.openAutoFileSettings=openSettings;
+window.SRPAutoFile={save:doSave,getMin:getMin,setMin:setMin};
+if(document.readyState==='complete') setTimeout(init,0); else window.addEventListener('load',function(){ setTimeout(init,0); });
 })();
 </script>
 </body>
