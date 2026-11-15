@@ -23,9 +23,13 @@ jobs:
       - name: Prepare web folder
         run: |
           mkdir -p www
-          for f in index.html android-bridge.js sw.js manifest.json icon-192.png icon-512.png sidikacem-map.json; do
+          for f in index.html android-bridge.js cloud-sync.js sw.js manifest.json icon-192.png icon-512.png sidikacem-map.json; do
             [ -f "$f" ] && cp "$f" www/ || true
           done
+          # Synchronisation cloud : chargée juste après le pont Android (le build échoue si la balise manque)
+          grep -q '<script src="./android-bridge.js"></script>' www/index.html
+          sed -i 's#<script src="./android-bridge.js"></script>#&\n    <script src="./cloud-sync.js"></script>#' www/index.html
+          grep -q 'cloud-sync.js' www/index.html
 
       - name: Install dependencies
         run: npm install
