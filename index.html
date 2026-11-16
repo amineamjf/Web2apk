@@ -1,0 +1,314 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="robots" content="noindex, nofollow">
+<meta name="color-scheme" content="light dark">
+<title>لوحة Smart RV</title>
+<style>
+  /* Direction : tableau de relevé d'atelier, clair et dense. Teal d'eau/électricité sur gris froid. */
+  :root {
+    --bg: #f1f5f6;
+    --surface: #ffffff;
+    --surface-2: #e8eef0;
+    --ink: #0e1d26;
+    --muted: #55656f;
+    --line: #d5dfe3;
+    --accent: #0f766e;
+    --accent-ink: #ffffff;
+    --good: #166534;  --good-bg: #dcfce7;
+    --warn: #92400e;  --warn-bg: #fef3c7;
+    --crit: #991b1b;  --crit-bg: #fee2e2;
+    --font: system-ui, -apple-system, "Segoe UI", "Noto Sans Arabic", Tahoma, Arial, sans-serif;
+    --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #0b161c; --surface: #12222b; --surface-2: #1a2f3a; --ink: #e6eff2; --muted: #93a8b2;
+      --line: #25404d; --accent: #2dd4bf; --accent-ink: #052a26;
+      --good: #86efac; --good-bg: #123a25; --warn: #fcd34d; --warn-bg: #3d2e0b; --crit: #fca5a5; --crit-bg: #451a1a;
+    }
+  }
+  * { box-sizing: border-box; }
+  html { -webkit-text-size-adjust: 100%; }
+  body {
+    margin: 0; background: var(--bg); color: var(--ink); font-family: var(--font); font-size: 15px; line-height: 1.5;
+    padding-block: max(16px, env(safe-area-inset-top, 0px)) max(24px, env(safe-area-inset-bottom, 0px));
+    padding-left: max(16px, env(safe-area-inset-left, 0px));
+    padding-right: max(16px, env(safe-area-inset-right, 0px));
+  }
+  main { max-width: 760px; margin: 0 auto; display: grid; gap: 14px; }
+  [hidden] { display: none !important; }
+  button, input { font: inherit; color: inherit; }
+  :focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
+
+  header { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
+  h1 { margin: 0; font-size: 20px; letter-spacing: 0; }
+  .sub { color: var(--muted); font-size: 13px; margin-top: 2px; }
+  .tools { display: flex; gap: 8px; }
+  .btn {
+    border: 1px solid var(--line); background: var(--surface); border-radius: 10px; padding: 9px 14px; font-weight: 700;
+    cursor: pointer; min-height: 42px;
+  }
+  .btn.primary { background: var(--accent); color: var(--accent-ink); border-color: transparent; }
+  .btn:disabled { opacity: .6; cursor: default; }
+
+  .login { background: var(--surface); border: 1px solid var(--line); border-radius: 14px; padding: 18px; display: grid; gap: 12px; }
+  .login h2 { margin: 0; font-size: 17px; }
+  .field { display: grid; gap: 6px; }
+  .field label { font-weight: 700; font-size: 13px; }
+  .field input {
+    width: 100%; min-height: 46px; padding: 10px 12px; border-radius: 10px; border: 1px solid var(--line);
+    background: var(--bg); direction: ltr; text-align: left;
+  }
+  .msg { padding: 10px 12px; border-radius: 10px; font-weight: 700; font-size: 14px; }
+  .msg.err { background: var(--crit-bg); color: var(--crit); }
+  .msg.info { background: var(--surface-2); color: var(--ink); }
+
+  .summary { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+  .tile { background: var(--surface); border: 1px solid var(--line); border-radius: 14px; padding: 12px 14px; min-width: 0; }
+  .tile .k { color: var(--muted); font-size: 12.5px; font-weight: 700; }
+  .tile .v { font-size: 24px; font-weight: 800; margin-top: 2px; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+  .tile .v small { font-size: 13px; font-weight: 700; color: var(--muted); }
+  .tile.wide { grid-column: 1 / -1; }
+  .bar { height: 10px; border-radius: 99px; background: var(--surface-2); overflow: hidden; margin-top: 8px; }
+  .bar > i { display: block; height: 100%; background: var(--accent); border-radius: 99px; min-width: 2px; }
+  .bar.hot > i { background: #d97706; }
+  .bar.full > i { background: #dc2626; }
+  .hint { color: var(--muted); font-size: 12.5px; margin-top: 6px; }
+
+  .list-head { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; margin-top: 4px; }
+  .list-head h2 { margin: 0; font-size: 16px; }
+  .stamp { color: var(--muted); font-size: 12.5px; }
+
+  .devices { display: grid; gap: 10px; padding: 0; margin: 0; list-style: none; }
+  .dev { background: var(--surface); border: 1px solid var(--line); border-radius: 14px; padding: 14px; display: grid; gap: 10px; min-width: 0; }
+  .dev-top { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; }
+  .dev-name { font-weight: 800; font-size: 16px; overflow-wrap: anywhere; }
+  .dev-meta { color: var(--muted); font-size: 13px; overflow-wrap: anywhere; }
+  .dev-meta bdi { font-family: var(--mono); font-size: 12px; }
+  .pill { flex: none; padding: 3px 10px; border-radius: 99px; font-weight: 800; font-size: 12.5px; white-space: nowrap; }
+  .pill.good { background: var(--good-bg); color: var(--good); }
+  .pill.warn { background: var(--warn-bg); color: var(--warn); }
+  .pill.crit { background: var(--crit-bg); color: var(--crit); }
+  .facts { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; margin: 0; }
+  .facts div { background: var(--bg); border-radius: 10px; padding: 8px 10px; min-width: 0; }
+  .facts dt { color: var(--muted); font-size: 12px; font-weight: 700; }
+  .facts dd { margin: 0; font-weight: 800; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+  .facts dd small { display: block; font-weight: 600; color: var(--muted); font-size: 12px; }
+  .slots { color: var(--muted); font-size: 12.5px; display: flex; flex-wrap: wrap; gap: 4px 14px; }
+  .slots b { color: var(--ink); }
+  .empty { text-align: center; color: var(--muted); padding: 26px 12px; background: var(--surface); border: 1px dashed var(--line); border-radius: 14px; }
+
+  @media (min-width: 560px) { .summary { grid-template-columns: repeat(4, minmax(0, 1fr)); } .tile.wide { grid-column: 1 / -1; } }
+  @media (max-width: 380px) { .facts { grid-template-columns: 1fr 1fr; } }
+  @media (prefers-reduced-motion: no-preference) { .bar > i { transition: width .4s ease; } }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <div>
+      <h1>لوحة Smart RV</h1>
+      <div class="sub">مزامنة الهواتف مع الخادم</div>
+    </div>
+    <div class="tools" id="tools" hidden>
+      <button class="btn" id="refresh" type="button">تحديث</button>
+      <button class="btn" id="logout" type="button">خروج</button>
+    </div>
+  </header>
+
+  <form class="login" id="login" autocomplete="on">
+    <h2>الدخول</h2>
+    <div class="field">
+      <label for="pw">كلمة السر</label>
+      <input id="pw" name="password" type="password" autocomplete="current-password" required>
+    </div>
+    <div class="msg err" id="loginErr" role="alert" hidden></div>
+    <button class="btn primary" id="go" type="submit">دخول</button>
+  </form>
+
+  <section id="board" hidden>
+    <div class="summary" id="summary"></div>
+    <div class="list-head">
+      <h2>الأجهزة</h2>
+      <span class="stamp" id="stamp"></span>
+    </div>
+    <ul class="devices" id="devices"></ul>
+  </section>
+</main>
+
+<script>
+(function () {
+  'use strict';
+  var ENDPOINT = 'https://oaomlhokzdsfkhqruoco.supabase.co/functions/v1/admin';
+  // مفتاح عام (anon) يلزم لبوابة Supabase فقط؛ الدخول الفعلي بكلمة السر.
+  var ANON = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im9hb21saG9remRzZmtocXJ1b2NvIiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTQ3NTkyMTgsImV4cCI6MjExMDMzNTIxOH0.frqWoDNNyj6qle31_h2Tvgp6dI03P4BXmk-up1wjm9s';
+  var password = '';   // في الذاكرة فقط، لا يُحفظ في المتصفح
+  var timer = null, busy = false;
+
+  var $ = function (id) { return document.getElementById(id); };
+  function el(tag, cls, text) {
+    var n = document.createElement(tag);
+    if (cls) n.className = cls;
+    if (text != null) n.textContent = text;
+    return n;
+  }
+
+  /* ---------- تنسيق ---------- */
+  function plural(n, one, two, few, many) {
+    if (n === 1) return one;
+    if (n === 2) return two;
+    if (n >= 3 && n <= 10) return n + ' ' + few;
+    return n + ' ' + many;
+  }
+  function ago(iso, now) {
+    var s = Math.max(0, Math.floor((now - Date.parse(iso)) / 1000));
+    if (s < 60) return 'الآن';
+    var m = Math.floor(s / 60);
+    if (m < 60) return 'منذ ' + plural(m, 'دقيقة', 'دقيقتين', 'دقائق', 'دقيقة');
+    var h = Math.floor(m / 60);
+    if (h < 24) return 'منذ ' + plural(h, 'ساعة', 'ساعتين', 'ساعات', 'ساعة');
+    var d = Math.floor(h / 24);
+    return 'منذ ' + plural(d, 'يوم', 'يومين', 'أيام', 'يوماً');
+  }
+  function when(iso) {
+    try { return new Date(iso).toLocaleString('ar-MA-u-nu-latn', { dateStyle: 'medium', timeStyle: 'short' }); }
+    catch (e) { return iso; }
+  }
+  function size(b) {
+    if (b < 1024) return b + ' بايت';
+    if (b < 1048576) return (b / 1024).toFixed(0) + ' كيلو';
+    if (b < 1073741824) return (b / 1048576).toFixed(b < 10485760 ? 1 : 0) + ' ميغا';
+    return (b / 1073741824).toFixed(2) + ' جيغا';
+  }
+  function status(iso, now) {
+    if (!iso) return { cls: 'crit', text: 'بلا نسخة كاملة' };
+    var h = (now - Date.parse(iso)) / 3600000;
+    if (h < 3) return { cls: 'good', text: 'متزامن' };
+    if (h < 24) return { cls: 'warn', text: 'متأخر' };
+    return { cls: 'crit', text: 'قديم' };
+  }
+
+  /* ---------- العرض ---------- */
+  function tile(k, v, unit, wide) {
+    var t = el('div', 'tile' + (wide ? ' wide' : ''));
+    t.appendChild(el('div', 'k', k));
+    var val = el('div', 'v', v);
+    if (unit) { val.appendChild(document.createTextNode(' ')); val.appendChild(el('small', '', unit)); }
+    t.appendChild(val);
+    return t;
+  }
+  function render(r) {
+    var now = Date.parse(r.serverTime) || Date.now();
+    var box = $('summary'); box.textContent = '';
+    var newest = r.devices.length ? r.devices[0].lastSyncAt : null;
+    box.appendChild(tile('الأجهزة', String(r.totals.devices)));
+    box.appendChild(tile('العدادات', String(r.totals.meters), 'في آخر نسخة'));
+    box.appendChild(tile('آخر مزامنة', newest ? ago(newest, now) : '—'));
+    box.appendChild(tile('نسخ محفوظة', String(r.devices.filter(function (d) { return d.lastSyncAt; }).length)));
+
+    var pct = Math.min(100, r.totals.bytes / r.totals.quotaBytes * 100);
+    var st = el('div', 'tile wide');
+    st.appendChild(el('div', 'k', 'التخزين المستعمل'));
+    var v = el('div', 'v', size(r.totals.bytes));
+    v.appendChild(document.createTextNode(' '));
+    v.appendChild(el('small', '', 'من ' + size(r.totals.quotaBytes) + ' (الخطة المجانية)'));
+    st.appendChild(v);
+    var bar = el('div', 'bar' + (pct > 90 ? ' full' : pct > 70 ? ' hot' : ''));
+    var fill = el('i'); fill.style.width = Math.max(0.5, pct).toFixed(1) + '%';
+    bar.appendChild(fill); st.appendChild(bar);
+    st.appendChild(el('div', 'hint', pct.toFixed(pct < 10 ? 1 : 0) + '% مستعمل. يحتفظ كل هاتف بنسختين (A وB) وتُستبدل الأقدم، فلا يتراكم الحجم.'));
+    box.appendChild(st);
+
+    $('stamp').textContent = 'آخر تحديث ' + new Date().toLocaleTimeString('ar-MA-u-nu-latn', { timeStyle: 'short' });
+
+    var ul = $('devices'); ul.textContent = '';
+    if (!r.devices.length) {
+      var li = el('li', 'empty', 'لا توجد مزامنات بعد. ثبّت التطبيق الجديد على الهاتف ثم اضغط «Synchroniser maintenant».');
+      ul.appendChild(li); return;
+    }
+    r.devices.forEach(function (d) {
+      var s = status(d.lastSyncAt, now);
+      var li = el('li', 'dev');
+      var top = el('div', 'dev-top');
+      var who = el('div');
+      who.appendChild(el('div', 'dev-name', d.user || 'جهاز بدون اسم'));
+      var meta = el('div', 'dev-meta');
+      if (d.tour) meta.appendChild(document.createTextNode(d.tour + ' · '));
+      meta.appendChild(el('bdi', '', d.id));
+      who.appendChild(meta);
+      top.appendChild(who);
+      top.appendChild(el('span', 'pill ' + s.cls, s.text));
+      li.appendChild(top);
+
+      var f = el('dl', 'facts');
+      function fact(k, v, sub) {
+        var c = el('div'); c.appendChild(el('dt', '', k));
+        var dd = el('dd', '', v); if (sub) dd.appendChild(el('small', '', sub));
+        c.appendChild(dd); f.appendChild(c);
+      }
+      fact('آخر مزامنة', d.lastSyncAt ? ago(d.lastSyncAt, now) : '—', d.lastSyncAt ? when(d.lastSyncAt) : '');
+      fact('العدادات', String(d.meters));
+      fact('الحجم', size(d.bytes));
+      li.appendChild(f);
+
+      var sl = el('div', 'slots');
+      ['A', 'B'].forEach(function (k) {
+        var x = d.slots[k], p = el('span');
+        p.appendChild(el('b', '', 'النسخة ' + k + ': '));
+        p.appendChild(document.createTextNode(!x ? 'فارغة' : x.partial ? 'ناقصة (انقطع الرفع)' : ago(x.savedAt, now)));
+        sl.appendChild(p);
+      });
+      li.appendChild(sl);
+      ul.appendChild(li);
+    });
+  }
+
+  /* ---------- الاتصال ---------- */
+  function showLogin(msg) {
+    clearInterval(timer); timer = null; password = '';
+    $('board').hidden = true; $('tools').hidden = true; $('login').hidden = false;
+    var e = $('loginErr'); e.hidden = !msg; e.textContent = msg || '';
+    $('pw').value = '';
+  }
+  var ERR = {
+    401: 'كلمة السر غير صحيحة.',
+    429: 'محاولات كثيرة خاطئة. انتظر 15 دقيقة ثم أعد المحاولة.',
+    503: 'لم تُضبط كلمة سر الخادم بعد. أضف ADMIN_PASSWORD في إعدادات Supabase (Edge Functions ← Secrets).'
+  };
+  async function load(manual) {
+    if (busy || !password) return;
+    busy = true; $('refresh').disabled = true; $('go').disabled = true;
+    try {
+      var res = await fetch(ENDPOINT, {
+        method: 'POST',
+        headers: { apikey: ANON, Authorization: 'Bearer ' + ANON, 'x-admin-password': password, 'Content-Type': 'application/json' },
+        body: '{}'
+      });
+      if (res.status === 401 || res.status === 429 || res.status === 503) { showLogin(ERR[res.status]); return; }
+      if (!res.ok) throw new Error('HTTP ' + res.status);
+      var data = await res.json();
+      $('login').hidden = true; $('board').hidden = false; $('tools').hidden = false;
+      render(data);
+      if (!timer) timer = setInterval(function () { if (!document.hidden) load(false); }, 60000);
+    } catch (e) {
+      if ($('board').hidden) showLogin('تعذّر الاتصال بالخادم. تحقق من الإنترنت ثم أعد المحاولة.');
+      else $('stamp').textContent = 'تعذّر التحديث — سأعيد المحاولة';
+    } finally { busy = false; $('refresh').disabled = false; $('go').disabled = false; }
+  }
+
+  $('login').addEventListener('submit', function (e) {
+    e.preventDefault();
+    password = $('pw').value;
+    $('loginErr').hidden = true;
+    load(true);
+  });
+  $('refresh').addEventListener('click', function () { load(true); });
+  $('logout').addEventListener('click', function () { showLogin(''); });
+  document.addEventListener('visibilitychange', function () { if (!document.hidden && password) load(false); });
+})();
+</script>
+</body>
+</html>
