@@ -16487,5 +16487,111 @@ window.SRPAutoFile={save:doSave,getMin:getMin,setMin:setMin};
 if(document.readyState==='complete') setTimeout(init,0); else window.addEventListener('load',function(){ setTimeout(init,0); });
 })();
 </script>
+<script>
+// V400 — Import Excel intelligent :
+//  (1) détecte tout seul la bonne feuille ET la ligne d'en-têtes (même sous un titre / une légende) ;
+//  (2) « Nouvelle période » : le dernier index connu (Nouvel index, sinon le plus récent « Index MM/AAAA »)
+//      devient l'Ancien index, et les lectures repartent à zéro.
+(function(){
+  'use strict';
+  function norm(s){ return String(s==null?'':s).toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g,'').trim(); }
+  // Une cellule d'en-tête compte pour UNE seule catégorie (la 1re qui correspond).
+  var CATS=[
+    ['meter',/compteur|appareil|\bmeter\b/,2],
+    ['prev',/ancien|precedent|\bprev\b|\bold\b/,2],
+    ['cur',/nouvel|nouveau|new\s*index/,2],
+    ['contract',/contrat/,1],
+    ['tour',/tournee|secteur/,1],
+    ['conso',/consommation|\bconso\b/,1],
+    ['anom',/anomalie/,1],
+    ['addr',/adresse|address/,1],
+    ['name',/\bnom\b|client/,1],
+    ['index',/\bindex\b/,1]
+  ];
+  function scoreRow(cells){
+    var seen={},score=0;
+    for(var i=0;i<cells.length;i++){
+      var t=norm(cells[i]); if(!t||t.length>40) continue;
+      for(var j=0;j<CATS.length;j++){
+        if(CATS[j][1].test(t)){ if(!seen[CATS[j][0]]){ seen[CATS[j][0]]=1; score+=CATS[j][2]; } break; }
+      }
+    }
+    return score;
+  }
+  function bestHeader(ws){
+    if(!ws||!ws['!ref']) return null;
+    var rg=XLSX.utils.decode_range(ws['!ref']), best=null;
+    var last=Math.min(rg.e.r, rg.s.r+14);
+    for(var r=rg.s.r;r<=last;r++){
+      var cells=[];
+      for(var c=rg.s.c;c<=rg.e.c;c++){ var cell=ws[XLSX.utils.encode_cell({r:r,c:c})]; cells.push(cell?cell.v:''); }
+      var sc=scoreRow(cells);
+      if(!best||sc>best.score) best={row:r,score:sc};
+    }
+    if(best) best.rows=rg.e.r-best.row;
+    return best;
+  }
+  var oldPick=(typeof v165PickImportSheet==='function')?v165PickImportSheet:null;
+  function pickSheet(workbook){
+    var names=workbook.SheetNames||[], best=null;
+    names.forEach(function(n){
+      var ws=workbook.Sheets[n], h=bestHeader(ws); if(!h) return;
+      var s=h.score+(/^rel[eé]v|rapport/i.test(String(n).trim())?1:0);
+      if(!best||s>best.s||(s===best.s&&h.rows>best.h.rows)) best={n:n,ws:ws,h:h,s:s};
+    });
+    if(!best||best.h.score<5) return oldPick?oldPick(workbook):workbook.Sheets[names[0]];
+    var ws=best.ws, rg=XLSX.utils.decode_range(ws['!ref']), out=ws;
+    if(best.h.row>rg.s.r){
+      out=Object.assign({},ws);
+      out['!ref']=XLSX.utils.encode_range({s:{r:best.h.row,c:rg.s.c},e:rg.e});
+    }
+    setTimeout(function(){ try{ showToast('Feuille détectée : « '+best.n+' » · en-têtes ligne '+(best.h.row+1),'success'); }catch(_){} },2200);
+    return out;
+  }
+  window.v165PickImportSheet=pickSheet;
+
+  function num(v){ var s=String(v==null?'':v).trim().replace(/\s/g,'').replace(',','.'); if(s==='') return null; var n=Number(s); return isFinite(n)?n:null; }
+  function datedCols(keys){
+    return keys.map(function(k){ var m=String(k).match(/^\s*index\s+(\d{1,2})\s*\/\s*(\d{4})\s*$/i); return m?{k:k,p:(+m[2])*100+(+m[1])}:null; })
+      .filter(Boolean).sort(function(a,b){return b.p-a.p;});
+  }
+  // Dernier index connu d'une ligne : Nouvel index > « Index MM/AAAA » le plus récent > Ancien index.
+  function latestKnown(row,curK,pK,dated){
+    var n=curK?num(row[curK]):null; if(n!==null) return n;
+    for(var i=0;i<dated.length;i++){ n=num(row[dated[i].k]); if(n!==null) return n; }
+    return pK?num(row[pK]):null;
+  }
+  var prevApply=window.applyMapping;
+  window.applyMapping=async function(){
+    try{
+      var curK=(document.getElementById('mapCurrent')||{}).value||'', pK=(document.getElementById('mapPrev')||{}).value||'', anoK=(document.getElementById('mapAnomaly')||{}).value||'';
+      if(pK && Array.isArray(rawJsonData) && rawJsonData.length){
+        var dated=datedCols(Object.keys(rawJsonData[0])), reads=0, newer=0;
+        rawJsonData.forEach(function(row){
+          if(curK && num(row[curK])!==null) reads++;
+          var l=latestKnown(row,curK,pK,dated), p=num(row[pK]);
+          if(l!==null && l!==p) newer++;
+        });
+        if(reads>0||newer>0){
+          var ok=confirm('Ce fichier contient '+reads+' lecture(s) (« Nouvel index »)'+(dated.length?' et des index datés jusqu’à '+String(dated[0].k).trim():'')+'.\n\n'
+            +'OK = NOUVELLE PÉRIODE (ex. relevé de novembre) : le dernier index connu devient l’ANCIEN index ('+newer+' compteur(s) changent) et toutes les lectures repartent à zéro.\n\n'
+            +'Annuler = importer le fichier tel quel (continuer la tournée en cours avec ses lectures).');
+          if(ok){
+            rawJsonData.forEach(function(row){
+              var l=latestKnown(row,curK,pK,dated);
+              if(l!==null) row[pK]=l;
+              if(curK) row[curK]='';
+              if(anoK) row[anoK]='';
+            });
+            try{ showToast('Nouvelle période : ancien index = dernier index connu.','success'); }catch(_){}
+          }
+        }
+      }
+    }catch(e){ console.warn('V400 nouvelle période :',e); }
+    return prevApply.apply(this,arguments);
+  };
+  window.SRPImportV400={pickSheet:pickSheet,latestKnown:latestKnown,datedCols:datedCols,bestHeader:bestHeader};
+})();
+</script>
 </body>
 </html>
