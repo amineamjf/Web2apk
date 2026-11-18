@@ -12142,7 +12142,7 @@ html body.v176-hide-prev.v176-hide-prev #entryPage .entry-previous-box{display:n
    Bouton « Vérifier les mises à jour » dans le menu de la tournée. */
 (function(){
   var busy=false;
-  var BUILD_CODE='V401-SMART-2026-11-18'; // change ce texte à chaque nouvelle version envoyée, pour vérifier visuellement qu'elle est bien chargée
+  var BUILD_CODE='V402-SMART-2026-11-18'; // change ce texte à chaque nouvelle version envoyée, pour vérifier visuellement qu'elle est bien chargée
   function say(m,t){ try{ showToast(m,t||'info'); }catch(_){ } }
   window.v210CheckUpdate=function(){
     if(busy) return;
@@ -16603,7 +16603,7 @@ if(document.readyState==='complete') setTimeout(init,0); else window.addEventLis
 
   function num(v){ var s=String(v==null?'':v).trim().replace(/\s/g,'').replace(',','.'); if(s==='') return null; var n=Number(s); return isFinite(n)?n:null; }
   function datedCols(keys){
-    return keys.map(function(k){ var m=String(k).match(/^\s*index\s+(\d{1,2})\s*\/\s*(\d{4})\s*$/i); return m?{k:k,p:(+m[2])*100+(+m[1])}:null; })
+    return keys.map(function(k){ var m=String(k).match(/^\s*index\s+(\d{1,2})\s*\/\s*(\d{4})\s*$/i); return m?{k:k,p:(+m[2])*12+(+m[1])}:null; })
       .filter(Boolean).sort(function(a,b){return b.p-a.p;});
   }
   // Dernier index connu d'une ligne : Nouvel index > « Index MM/AAAA » le plus récent > Ancien index.
@@ -16618,6 +16618,7 @@ if(document.readyState==='complete') setTimeout(init,0); else window.addEventLis
       var curK=(document.getElementById('mapCurrent')||{}).value||'', pK=(document.getElementById('mapPrev')||{}).value||'', anoK=(document.getElementById('mapAnomaly')||{}).value||'';
       if(pK && Array.isArray(rawJsonData) && rawJsonData.length){
         var dated=datedCols(Object.keys(rawJsonData[0])), reads=0, newer=0;
+        if(dated.length) dated=dated.filter(function(d){ return d.p>=dated[0].p-2; }); // seulement les 3 derniers mois : jamais un vieil index (ex. 08/2025)
         rawJsonData.forEach(function(row){
           if(curK && num(row[curK])!==null) reads++;
           var l=latestKnown(row,curK,pK,dated), p=num(row[pK]);
