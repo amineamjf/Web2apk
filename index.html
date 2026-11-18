@@ -12142,7 +12142,7 @@ html body.v176-hide-prev.v176-hide-prev #entryPage .entry-previous-box{display:n
    Bouton « Vérifier les mises à jour » dans le menu de la tournée. */
 (function(){
   var busy=false;
-  var BUILD_CODE='V403-PLACE-EXPORT-2026-11-18'; // change ce texte à chaque nouvelle version envoyée, pour vérifier visuellement qu'elle est bien chargée
+  var BUILD_CODE='V404-PHOTO-INHAB-2026-11-19'; // change ce texte à chaque nouvelle version envoyée, pour vérifier visuellement qu'elle est bien chargée
   function say(m,t){ try{ showToast(m,t||'info'); }catch(_){ } }
   window.v210CheckUpdate=function(){
     if(busy) return;
@@ -12393,6 +12393,7 @@ html body.v176-hide-prev.v176-hide-prev #entryPage .entry-previous-box{display:n
         '<button data-a="crop" aria-label="Rogner">✂</button>'+
         COLORS.map(function(c,i){ return '<button class="dot'+(i===0?' sel':'')+'" data-c="'+c+'" style="background:'+c+'" aria-label="Couleur du stylo"></button>'; }).join('')+
         '<button data-a="undo" aria-label="Annuler" disabled>↶</button>'+
+        '<button class="dl" data-a="dl" aria-label="Enregistrer la photo dans le téléphone" style="background:#0f766e">💾 Téléphone</button>'+
       '</div>'+
       '<div class="stage"><div class="wrap"><canvas class="cv"></canvas><canvas class="ov"></canvas></div>'+
         '<button class="apply" data-a="apply" hidden>✓ Rogner</button></div>'+
@@ -12540,6 +12541,23 @@ html body.v176-hide-prev.v176-hide-prev #entryPage .entry-previous-box{display:n
       try{ window.__photoMeter=m; (window.openMeterCamera||openMeterCamera)(); }
       catch(e){ toast('Caméra indisponible.'); }
     }
+    async function doDevice(){          // V403 : enregistrer la photo (avec bandeau d'identification) dans le téléphone
+      if(S.busy) return; S.busy=true;
+      try{
+        var edited=S.stack.length>0;
+        var blob=edited?await new Promise(function(res){ cv.toBlob(res,'image/jpeg',0.9); }):dataToBlob(S.m.photo);
+        if(!blob){ toast('Impossible de préparer la photo.'); return; }
+        try{ if(window.v295Stamp){ var sb=await window.v295Stamp(blob,S.m); if(sb) blob=sb; } }catch(_){}
+        var ext=(blob.type.split('/')[1]||'jpg').replace('jpeg','jpg');
+        var clean=function(v){ return String(v==null?'':v).replace(/[^a-zA-Z0-9_-]+/g,'_'); };
+        var name='Photo_'+clean(S.m.meter||'compteur')+(S.m.contract?'_'+clean(S.m.contract):'')+'.'+ext;
+        var url=URL.createObjectURL(blob), a=document.createElement('a');
+        a.href=url; a.download=name; document.body.appendChild(a); a.click(); a.remove();
+        setTimeout(function(){ URL.revokeObjectURL(url); },60000);
+        toast('Photo enregistrée dans le téléphone (Téléchargements › SmartRV).','success');
+      }catch(e){ console.error('v403 photo',e); toast('Enregistrement impossible.'); }
+      finally{ S.busy=false; }
+    }
     async function doShare(){
       if(S.busy) return; S.busy=true;
       try{
@@ -12579,6 +12597,7 @@ html body.v176-hide-prev.v176-hide-prev #entryPage .entry-previous-box{display:n
       else if(a==='apply') applyCrop();
       else if(a==='save') doSave();
       else if(a==='wa') doShare();
+      else if(a==='dl') doDevice();
       else if(a==='del') doDelete();
       else if(a==='rep') doReplace();
     });
@@ -12883,7 +12902,7 @@ html body #entryPage #cameraPhotoBadge{top:-6px!important;right:-6px!important}
     var t=document.getElementById('v340Thumb'); if(t) return t;
     var h=document.getElementById('customerContactActions'); if(!h||!h.parentNode) return null;
     t=document.createElement('div'); t.id='v340Thumb'; t.setAttribute('role','button'); t.setAttribute('aria-label','Agrandir la photo du compteur');
-    t.innerHTML='<img alt="Photo du compteur"><div><div class="t">Photo du compteur</div><div class="s">Appuyez pour agrandir, rogner, remplacer ou supprimer</div></div>';
+    t.innerHTML='<img alt="Photo du compteur"><div><div class="t">Photo du compteur</div><div class="s">Appuyez pour agrandir, enregistrer dans le téléphone, rogner, remplacer ou supprimer</div></div>';
     t.addEventListener('click',function(e){
       e.preventDefault(); e.stopPropagation();
       var m=cur(); if(m&&m.photo&&typeof window.v200OpenPhotoEditor==='function') window.v200OpenPhotoEditor(m);
@@ -16823,7 +16842,7 @@ if(document.readyState==='complete') setTimeout(init,0); else window.addEventLis
     var prv=(m.prev===''||m.prev==null)?NaN:Number(m.prev);
     var conso=(isFinite(cur)&&isFinite(prv))?cur-prv:null;
     var et='NON RELEVÉ';
-    if(m.anomaly&&m.anomaly!=='RAS') et='ANOMALIE';
+    if(m.anomaly&&m.anomaly!=='RAS'&&m.anomaly!=='INHABITE') et='ANOMALIE';
     else if(conso!==null&&conso<0) et='CONSOMMATION NÉGATIVE';
     else if(conso!==null&&((m.type==='EAU'&&SRPSmart.high(m,conso))||(m.type==='ELEC'&&conso>200))) et='CONSOMMATION ÉLEVÉE';
     else if(conso!==null) et='NORMAL';
@@ -16833,7 +16852,7 @@ if(document.readyState==='complete') setTimeout(init,0); else window.addEventLis
   /* ----- Relevé : heure exacte + ordre de lecture ----- */
   function patchReleve(wb,list){
     var ws=wb.Sheets['Relevé']; if(!ws||!ws['!ref']) return;
-    var cMeter=colOf(ws,'N° Compteur'), cT=colOf(ws,'Date/Heure Relevé'), i;
+    var cMeter=colOf(ws,'N° Compteur'), cT=colOf(ws,'Date/Heure Relevé'), cAn=colOf(ws,'Anomalie'), cAt=colOf(ws,'Annotation'), i;
     var rg=XLSX.utils.decode_range(ws['!ref']);
     // rang de lecture : tri croissant sur l'heure exacte (égalité -> ordre du fichier)
     var arr=[];
@@ -16848,6 +16867,11 @@ if(document.readyState==='complete') setTimeout(init,0); else window.addEventLis
       var mc=cMeter>=0?ws[XLSX.utils.encode_cell({r:r,c:cMeter})]:null;
       var aligned=!mc||String(mc.v)===String(list[i].meter||'');
       var d2=vdate(list[i].readAt);
+      // Convention du système : « 03_LOCAL INHABITIE » va dans la colonne Annotation ; les autres cas (bloqué, inaccessible…) restent dans Anomalie
+      if(aligned&&list[i].anomaly==='INHABITE'&&cAn>=0&&cAt>=0){
+        var ca=ws[XLSX.utils.encode_cell({r:r,c:cAn})], cb=ws[XLSX.utils.encode_cell({r:r,c:cAt})];
+        if(ca) ca.v='RAS'; if(cb) cb.v='03_LOCAL INHABITIE';
+      }
       if(aligned&&cT>=0&&d2){
         var old=ws[XLSX.utils.encode_cell({r:r,c:cT})];
         ws[XLSX.utils.encode_cell({r:r,c:cT})]={t:'n',v:serial(d2),z:FMT_DT,s:old&&old.s?old.s:undefined};
@@ -16896,7 +16920,9 @@ if(document.readyState==='complete') setTimeout(init,0); else window.addEventLis
       ['Consommation négative',cnt('CONSOMMATION NÉGATIVE')],['Anomalies',cnt('ANOMALIE')],
       ['Index arrêtés (0) parmi les lus',info.filter(function(x){return x.conso===0;}).length],
       ['Consommation eau des lus (m³)',Math.round(eauSum)],['Médiane eau (m³)',med],['Compteurs ajoutés manuellement',list.filter(function(m){return m.added===true;}).length],
-      ['Compteurs réordonnés',list.filter(function(m){return m.reordered===true;}).length]];
+      ['Compteurs réordonnés',list.filter(function(m){return m.reordered===true;}).length],
+      ['Locaux inhabités (03)',list.filter(function(m){return m.anomaly==='INHABITE';}).length],
+      ['Compteurs avec photo',list.filter(function(m){return !!m.photo;}).length]];
     if(elec>0) summ.splice(11,0,['Consommation électricité des lus (kWh)',Math.round(elec)]);
     summ.forEach(function(p){ put(R,0,p[0],K); put(R,1,p[1],V); R++; });
     if(times.length){ put(R,0,'Premier relevé',K); put(R,1,serial(times[0]),V,FMT_DT); R++; put(R,0,'Dernier relevé',K); put(R,1,serial(times[times.length-1]),V,FMT_DT); R++; }
