@@ -7774,7 +7774,7 @@
             setBusy(true, 'Export Excel', 'Génération du fichier (' + allMetersData.length + ' compteur(s))…');
             await new Promise(r => setTimeout(r, 30));
             try {
-                XLSX.writeFile(buildExportWorkbook(),`Releve_Compteurs_${new Date().toISOString().slice(0,10)}.xlsx`);
+                { const __wb = buildExportWorkbook(), __fn = `Releve_Compteurs_${new Date().toISOString().slice(0,10)}.xlsx`; if (window.SRPWriteXlsx) await window.SRPWriteXlsx(__wb, __fn); else XLSX.writeFile(__wb, __fn); }
                 showToast('Export Excel terminé. Les photos sont disponibles dans l’export ZIP.');
             } catch (e) {
                 showToast('Échec de l’export (fichier peut-être trop volumineux pour cet appareil).', 'error');
@@ -8406,7 +8406,7 @@ else startMap();
             setBusy(true, 'Export ZIP', 'Création du fichier Excel et des photos…');
             try {
                 const zip = new JSZip();
-                zip.file('Releve.xlsx', XLSX.write(buildExportWorkbook(), {bookType:'xlsx', type:'array'}));
+                zip.file('Releve.xlsx', window.SRPXlsxBytes ? await window.SRPXlsxBytes(buildExportWorkbook()) : XLSX.write(buildExportWorkbook(), {bookType:'xlsx', type:'array'}));
                 const photosRoot = zip.folder('Photos');
                 let photoCount = 0;
                 for (let i = 0; i < allMetersData.length; i++) {
@@ -12142,7 +12142,7 @@ html body.v176-hide-prev.v176-hide-prev #entryPage .entry-previous-box{display:n
    Bouton « Vérifier les mises à jour » dans le menu de la tournée. */
 (function(){
   var busy=false;
-  var BUILD_CODE='V405-LONGPRESS-PLACE-2026-11-19'; // change ce texte à chaque nouvelle version envoyée, pour vérifier visuellement qu'elle est bien chargée
+  var BUILD_CODE='V406-DASHBOARD-2026-11-19'; // change ce texte à chaque nouvelle version envoyée, pour vérifier visuellement qu'elle est bien chargée
   function say(m,t){ try{ showToast(m,t||'info'); }catch(_){ } }
   window.v210CheckUpdate=function(){
     if(busy) return;
@@ -16832,11 +16832,11 @@ if(document.readyState==='complete') setTimeout(init,0); else window.addEventLis
 })();
 </script>
 <script id="srp-export-v403">
-// V403 — Export Excel : (1) heure EXACTE avec secondes (vraie date/heure Excel, triable) ; (2) colonne « Ordre de lecture » ;
-//        (3) 2 feuilles seulement : « Analyse » (résumé, par tournée, à vérifier) + « Relevé ».
+// V406 — Export Excel : (1) heure EXACTE avec secondes (vraie date/heure Excel, triable) ; (2) colonne « Ordre de lecture » ;
+//        (3) 2 feuilles seulement : « Analyse » (TABLEAU DE BORD : tuiles, anneau, barres, classement) + « Relevé ».
 (function(){
   'use strict';
-  var NAVY='0A2A66', FMT_DT='dd/mm/yyyy hh:mm:ss';
+  var FMT_DT='dd/mm/yyyy hh:mm:ss', NAVY='1F3864', BLUE='2F5597', BORD='B4C6E7';
   function serial(d){ return (d.getTime()-d.getTimezoneOffset()*60000)/86400000+25569; }
   function vdate(v){ if(!v) return null; var d=new Date(v); return isNaN(d.getTime())?null:d; }
   function colOf(ws,title){
@@ -16844,24 +16844,41 @@ if(document.readyState==='complete') setTimeout(init,0); else window.addEventLis
     for(var c=rg.s.c;c<=rg.e.c;c++){ var x=ws[XLSX.utils.encode_cell({r:0,c:c})]; if(x&&String(x.v)===title) return c; }
     return -1;
   }
-  function stateOf(m){
+  /* ---- niveaux (même vocabulaire que le tableau de bord de référence) ---- */
+  var LV=[ // nom, couleur anneau, texte, fond cellule
+    ['Très élevée','FFD966','7F6000','FFE699'],['Élevée','FFF2CC','9C6500','FFF2CC'],['Normale','A9D18E','375623','E2EFDA'],
+    ['Faible','F4C7A8','C55A11','FCE4D6'],['Nul','F2A57A','C55A11','F8CBAD'],['Négatif','E8908A','9C0006','F4B6B0'],
+    ['Anomalie','B4A7D6','5B3F8C','E4DFEC'],['Inhabité','BFBFBF','404040','EDEDED'],['Non relevé','D9D9D9','7F7F7F','F2F2F2']];
+  var LVI={}; LV.forEach(function(l,i){ LVI[l[0]]=i; });
+  function infoOf(m){
     var cur=(m.current!==''&&m.current!=null)?Number(m.current):NaN;
     var prv=(m.prev===''||m.prev==null)?NaN:Number(m.prev);
-    var conso=(isFinite(cur)&&isFinite(prv))?cur-prv:null;
-    var et='NON RELEVÉ';
-    if(m.anomaly&&m.anomaly!=='RAS'&&m.anomaly!=='INHABITE') et='ANOMALIE';
-    else if(conso!==null&&conso<0) et='CONSOMMATION NÉGATIVE';
-    else if(conso!==null&&((m.type==='EAU'&&SRPSmart.high(m,conso))||(m.type==='ELEC'&&conso>200))) et='CONSOMMATION ÉLEVÉE';
-    else if(conso!==null) et='NORMAL';
-    return {conso:conso,et:et,cur:isFinite(cur)?cur:null,prv:isFinite(prv)?prv:null};
+    return {cur:isFinite(cur)?cur:null,prv:isFinite(prv)?prv:null,conso:(isFinite(cur)&&isFinite(prv))?cur-prv:null};
+  }
+  function levelOf(m,x,faibleMax){
+    var an=m.anomaly&&m.anomaly!=='RAS'?m.anomaly:'';
+    if(an&&an!=='INHABITE') return 'Anomalie';
+    if(an==='INHABITE'&&x.conso===null) return 'Inhabité';
+    if(x.conso===null) return 'Non relevé';
+    var c=x.conso;
+    if(c<0) return 'Négatif';
+    if(c===0) return 'Nul';
+    if(m.type==='ELEC') return c>200?(c>400?'Très élevée':'Élevée'):'Normale';
+    var ev=SRPSmart.eval(m,c);
+    if(ev){ var t=ev.kind==='fixed'?SRPSmart.get().fixed:ev.thr; return c>=2*t?'Très élevée':'Élevée'; }
+    if(faibleMax>0&&c<=faibleMax) return 'Faible';
+    return 'Normale';
+  }
+  function stateOf(m){   // conservé pour compatibilité des tests
+    var x=infoOf(m), l=levelOf(m,x,0);
+    return {conso:x.conso,cur:x.cur,prv:x.prv,et:({'Anomalie':'ANOMALIE','Négatif':'CONSOMMATION NÉGATIVE','Très élevée':'CONSOMMATION ÉLEVÉE','Élevée':'CONSOMMATION ÉLEVÉE'})[l]||(x.conso===null?'NON RELEVÉ':'NORMAL')};
   }
 
-  /* ----- Relevé : heure exacte + ordre de lecture ----- */
+  /* ----- Relevé : heure exacte + ordre de lecture + règle Annotation « 03_LOCAL INHABITIE » ----- */
   function patchReleve(wb,list){
     var ws=wb.Sheets['Relevé']; if(!ws||!ws['!ref']) return;
     var cMeter=colOf(ws,'N° Compteur'), cT=colOf(ws,'Date/Heure Relevé'), cAn=colOf(ws,'Anomalie'), cAt=colOf(ws,'Annotation'), i;
     var rg=XLSX.utils.decode_range(ws['!ref']);
-    // rang de lecture : tri croissant sur l'heure exacte (égalité -> ordre du fichier)
     var arr=[];
     for(i=0;i<list.length;i++){ var d=vdate(list[i].readAt); if(d) arr.push({i:i,t:d.getTime()}); }
     arr.sort(function(a,b){ return a.t-b.t || a.i-b.i; });
@@ -16874,7 +16891,6 @@ if(document.readyState==='complete') setTimeout(init,0); else window.addEventLis
       var mc=cMeter>=0?ws[XLSX.utils.encode_cell({r:r,c:cMeter})]:null;
       var aligned=!mc||String(mc.v)===String(list[i].meter||'');
       var d2=vdate(list[i].readAt);
-      // Convention du système : « 03_LOCAL INHABITIE » va dans la colonne Annotation ; les autres cas (bloqué, inaccessible…) restent dans Anomalie
       if(aligned&&list[i].anomaly==='INHABITE'&&cAn>=0&&cAt>=0){
         var ca=ws[XLSX.utils.encode_cell({r:r,c:cAn})], cb=ws[XLSX.utils.encode_cell({r:r,c:cAt})];
         if(ca) ca.v='RAS'; if(cb) cb.v='03_LOCAL INHABITIE';
@@ -16898,66 +16914,159 @@ if(document.readyState==='complete') setTimeout(init,0); else window.addEventLis
     }
   }
 
-  /* ----- Analyse ----- */
-  function buildAnalyse(list){
-    var ws={}, R=0, NC=10;
-    function put(r,c,v,s,z){
-      var a=XLSX.utils.encode_cell({r:r,c:c});
-      if(v===null||v===undefined||v===''){ if(s) ws[a]={t:'s',v:'',s:s}; return; }
-      var cell={t:(typeof v==='number')?'n':'s',v:v}; if(s) cell.s=s; if(z) cell.z=z; ws[a]=cell;
+  /* ----- Analyse = tableau de bord ----- */
+  function buildDash(list){
+    var ws={}, merges=[], meta={};
+    function a(r,c){ return XLSX.utils.encode_cell({r:r,c:c}); }
+    function box(c,t){ var o={style:'thin',color:{rgb:c||BORD}}; return {top:o,bottom:o,left:o,right:o}; }
+    function put(r,c,v,s,z){ var cell={t:(typeof v==='number')?'n':'s',v:(v===null||v===undefined)?'':v}; if(s) cell.s=s; if(z) cell.z=z; ws[a(r,c)]=cell; }
+    function span(r,c1,c2,v,s,z){ put(r,c1,v,s,z); for(var c=c1+1;c<=c2;c++) put(r,c,'',s); if(c2>c1) merges.push({s:{r:r,c:c1},e:{r:r,c:c2}}); }
+    var cfg=SRPSmart.get(), now=new Date(), n=list.length;
+    var info=list.map(infoOf), i;
+    var eau=[]; info.forEach(function(x,k){ if(x.conso!==null&&x.conso>0&&list[k].type!=='ELEC') eau.push(x.conso); });
+    eau.sort(function(p,q){return p-q;});
+    var med=eau.length?(eau.length%2?eau[(eau.length-1)/2]:(eau[eau.length/2-1]+eau[eau.length/2])/2):0;
+    var faibleMax=med>=2?Math.floor(med/2):0;
+    var lev=list.map(function(m,k){ return levelOf(m,info[k],faibleMax); });
+    var cnt={}; LV.forEach(function(l){ cnt[l[0]]=0; }); lev.forEach(function(l){ cnt[l]++; });
+    var eauSum=eau.reduce(function(p,q){return p+q;},0), eauMax=eau.length?eau[eau.length-1]:0;
+    var lus=info.filter(function(x){return x.cur!==null;}).length;
+    var nPhoto=list.filter(function(m){return !!m.photo;}).length;
+    var COLS=[2,22,12,12,12,12,12,3,22,18,12,20,58];
+    /* bandeau */
+    span(0,1,12,'TABLEAU DE BORD — ANALYSE DE CONSOMMATION',{fill:{fgColor:{rgb:NAVY}},font:{bold:true,sz:18,color:{rgb:'FFFFFF'}},alignment:{horizontal:'center',vertical:'center'}});
+    /* tuiles : [libellé, valeur, couleur, c1, c2] */
+    function tiles(rowL,T){
+      T.forEach(function(t){
+        span(rowL,t[3],t[4],t[0],{fill:{fgColor:{rgb:t[2]}},font:{bold:true,sz:10,color:{rgb:'FFFFFF'}},alignment:{horizontal:'center',vertical:'center'}});
+        span(rowL+1,t[3],t[4],t[1],{fill:{fgColor:{rgb:'F2F2F2'}},font:{bold:true,sz:26,color:{rgb:t[2]}},alignment:{horizontal:'center',vertical:'center'}},typeof t[1]==='number'?'#,##0':(t[5]||undefined));
+      });
     }
-    var TH={fill:{fgColor:{rgb:NAVY}},font:{bold:true,color:{rgb:'FFFFFF'},sz:10},alignment:{horizontal:'center',vertical:'center',wrapText:true}};
-    var H2={font:{bold:true,sz:12,color:{rgb:NAVY}}}, K={font:{sz:10}}, V={font:{bold:true,sz:10},alignment:{horizontal:'right'}};
-    var FILL={'CONSOMMATION NÉGATIVE':'FCA5A5','CONSOMMATION ÉLEVÉE':'FDE68A','ANOMALIE':'E9D5FF'};
-    var LAB={'CONSOMMATION NÉGATIVE':'NÉGATIF','CONSOMMATION ÉLEVÉE':'ÉLEVÉE','ANOMALIE':'ANOMALIE'};
-    var cfg=SRPSmart.get(), now=new Date();
-    var info=list.map(stateOf), n=list.length, i;
-    var lus=info.filter(function(x){return x.et!=='NON RELEVÉ';});
-    var cnt=function(e){ return info.filter(function(x){return x.et===e;}).length; };
-    var eau=[], elec=0;
-    list.forEach(function(m,k){ var c=info[k].conso; if(c!==null&&c>=0){ if(m.type==='ELEC') elec+=c; else eau.push(c); } });
-    eau.sort(function(a,b){return a-b;});
-    var eauSum=eau.reduce(function(a,b){return a+b;},0), med=eau.length?eau[Math.floor(eau.length/2)]:0;
-    var times=list.map(function(m){return vdate(m.readAt);}).filter(Boolean).sort(function(a,b){return a-b;});
-    put(R,0,'ANALYSE DU RELEVÉ',{font:{bold:true,sz:16,color:{rgb:NAVY}}}); R++;
-    put(R,0,'Exporté le '+now.toLocaleDateString('fr-FR')+' à '+now.toLocaleTimeString('fr-FR')+'  ·  Élevée = '+(cfg.fixed>0?'> '+cfg.fixed+' m³ ou ':'')+(cfg.smart?'≥ ×'+cfg.factor+' la conso habituelle du compteur (min. '+cfg.minM3+' m³)':'seuil fixe seul'),{font:{italic:true,sz:9,color:{rgb:'555555'}}}); R+=2;
-    put(R,0,'Résumé',H2); R++;
-    var summ=[['Total compteurs',n],['Eau',list.filter(function(m){return m.type!=='ELEC';}).length],['Électricité',list.filter(function(m){return m.type==='ELEC';}).length],
-      ['Relevés (lus)',lus.length],['Restants',n-lus.length],['Normaux',cnt('NORMAL')],['Consommation élevée',cnt('CONSOMMATION ÉLEVÉE')],
-      ['Consommation négative',cnt('CONSOMMATION NÉGATIVE')],['Anomalies',cnt('ANOMALIE')],
-      ['Index arrêtés (0) parmi les lus',info.filter(function(x){return x.conso===0;}).length],
-      ['Consommation eau des lus (m³)',Math.round(eauSum)],['Médiane eau (m³)',med],['Compteurs ajoutés manuellement',list.filter(function(m){return m.added===true;}).length],
-      ['Compteurs réordonnés',list.filter(function(m){return m.reordered===true;}).length],
-      ['Locaux inhabités (03)',list.filter(function(m){return m.anomaly==='INHABITE';}).length],
-      ['Compteurs avec photo',list.filter(function(m){return !!m.photo;}).length]];
-    if(elec>0) summ.splice(11,0,['Consommation électricité des lus (kWh)',Math.round(elec)]);
-    summ.forEach(function(p){ put(R,0,p[0],K); put(R,1,p[1],V); R++; });
-    if(times.length){ put(R,0,'Premier relevé',K); put(R,1,serial(times[0]),V,FMT_DT); R++; put(R,0,'Dernier relevé',K); put(R,1,serial(times[times.length-1]),V,FMT_DT); R++; }
-    R++; put(R,0,'Par tournée',H2); R++;
-    ['Tournée','Compteurs','Relevés','% relevés','Conso eau (m³)','Élevées','Négatives'].forEach(function(t,c){ put(R,c,t,TH); }); R++;
-    var T={};
-    list.forEach(function(m,k){ var t=String(m.tour||(typeof tourName!=='undefined'?tourName:'')||'(sans tournée)'); var o=T[t]||(T[t]={n:0,l:0,s:0,h:0,g:0}); o.n++;
-      if(info[k].et!=='NON RELEVÉ') o.l++; if(info[k].conso!==null&&info[k].conso>0&&m.type!=='ELEC') o.s+=info[k].conso; if(info[k].et==='CONSOMMATION ÉLEVÉE') o.h++; if(info[k].et==='CONSOMMATION NÉGATIVE') o.g++; });
-    Object.keys(T).sort(function(a,b){return T[b].n-T[a].n;}).slice(0,60).forEach(function(t){
-      var o=T[t]; put(R,0,t,K); put(R,1,o.n,K); put(R,2,o.l,K); put(R,3,o.n?o.l/o.n:0,K,'0%'); put(R,4,Math.round(o.s),K); put(R,5,o.h,K); put(R,6,o.g,K); R++; });
-    R++; put(R,0,'À vérifier',H2); R++;
-    var hdrRow=R;
-    ['Motif','N°','N° Compteur','Client','Tournée','Index préc.','Index act.','Conso','Heure du relevé','Détail'].forEach(function(t,c){ put(R,c,t,TH); }); R++;
-    var ord={'CONSOMMATION NÉGATIVE':0,'CONSOMMATION ÉLEVÉE':1,'ANOMALIE':2}, rev=[];
-    list.forEach(function(m,k){ if(ord[info[k].et]!==undefined) rev.push(k); });
-    rev.sort(function(a,b){ var A=info[a],B=info[b]; return ord[A.et]-ord[B.et] || (A.et==='CONSOMMATION NÉGATIVE'?(A.conso-B.conso):((B.conso||0)-(A.conso||0))); });
-    rev.forEach(function(k){
-      var m=list[k], x=info[k], d=vdate(m.readAt), f={fill:{fgColor:{rgb:FILL[x.et]}},font:{bold:true,sz:10},alignment:{horizontal:'center'}};
-      var det=x.et==='CONSOMMATION ÉLEVÉE'?(m.type==='EAU'?SRPSmart.why(m,x.conso):'Au-dessus du seuil (200 kWh).'):(x.et==='CONSOMMATION NÉGATIVE'?'Nouvel index inférieur à l’ancien index.':String(m.anomaly||'').replace(/_/g,' '));
-      put(R,0,LAB[x.et],f); put(R,1,k+1,K); put(R,2,m.meter||'',K); put(R,3,m.name||'',K); put(R,4,m.tour||(typeof tourName!=='undefined'?tourName:'')||'',K);
-      put(R,5,x.prv,K); put(R,6,x.cur,K); put(R,7,x.conso,{font:{bold:true,sz:10}}); if(d) put(R,8,serial(d),K,FMT_DT); put(R,9,det,K); R++;
+    tiles(2,[['Compteurs suivis',n,NAVY,1,2],['Très élevées',cnt['Très élevée'],'BF9000',3,4],['Élevées',cnt['Élevée'],'D4A72C',5,6],['Normales',cnt['Normale'],'548235',8,9],['Faibles / nulles',cnt['Faible']+cnt['Nul'],'C55A11',10,12]]);
+    tiles(5,[['Négatifs',cnt['Négatif'],'C00000',1,2],['Anomalies',cnt['Anomalie'],'7030A0',3,4],['Inhabités (03)',cnt['Inhabité'],'595959',5,6],['Non relevés',cnt['Non relevé'],'7F7F7F',8,9],['Avancement',n?lus/n:0,BLUE,10,12,'0%']]);
+    function fmt(x){ return (Math.round(x*10)/10).toString().replace('.',','); }
+    span(7,1,12,'Conso eau des relevés : '+Math.round(eauSum).toLocaleString('fr-FR')+' m³   |   Médiane : '+fmt(med)+' m³   |   Maximum : '+fmt(eauMax)+' m³   |   Photos : '+nPhoto+'   |   Exporté le '+now.toLocaleDateString('fr-FR')+' à '+now.toLocaleTimeString('fr-FR'),{font:{italic:true,sz:9,color:{rgb:NAVY}},alignment:{horizontal:'left'}});
+    /* répartition */
+    var H=9, TH={fill:{fgColor:{rgb:BLUE}},font:{bold:true,sz:11,color:{rgb:'FFFFFF'}},alignment:{horizontal:'center',vertical:'center'},border:box(BLUE)};
+    put(H,1,'Répartition par niveau',{font:{bold:true,sz:12,color:{rgb:NAVY}}});
+    put(H+1,1,'Niveau',TH); put(H+1,2,'Compteurs',TH);
+    LV.forEach(function(l,k){
+      put(H+2+k,1,l[0],{fill:{fgColor:{rgb:l[3]}},font:{sz:11,bold:true,color:{rgb:l[2]}},border:box()});
+      put(H+2+k,2,cnt[l[0]],{font:{bold:true,sz:11},alignment:{horizontal:'center'},border:box()},'#,##0');
     });
-    if(!rev.length){ put(R,0,'Rien à vérifier.',{font:{sz:10,color:{rgb:'166534'}}}); R++; }
-    ws['!ref']=XLSX.utils.encode_range({s:{r:0,c:0},e:{r:R-1,c:NC-1}});
-    ws['!cols']=[{wch:38},{wch:12},{wch:20},{wch:28},{wch:18},{wch:12},{wch:12},{wch:12},{wch:21},{wch:80}];
-    ws['!merges']=[{s:{r:0,c:0},e:{r:0,c:NC-1}},{s:{r:1,c:0},e:{r:1,c:NC-1}}];
-    if(rev.length) ws['!autofilter']={ref:XLSX.utils.encode_range({s:{r:hdrRow,c:0},e:{r:R-1,c:NC-1}})};
-    return ws;
+    meta.dough={r1:H+3,r2:H+2+LV.length};            // lignes Excel 1-based
+    meta.doughVals=LV.map(function(l){return cnt[l[0]];});
+    /* classement des cas à surveiller */
+    put(H,8,'À surveiller — classement par gravité',{font:{bold:true,sz:12,color:{rgb:NAVY}}});
+    span(H+1,8,9,'Client · N° compteur',TH); put(H+1,10,'m³',TH); put(H+1,11,'Niveau',TH); put(H+1,12,'Pourquoi',TH);
+    var grp={'Très élevée':0,'Élevée':1,'Négatif':2,'Anomalie':3}, rk=[];
+    list.forEach(function(m,k){ if(grp[lev[k]]!==undefined) rk.push(k); });
+    rk.sort(function(p,q){ var gp=grp[lev[p]],gq=grp[lev[q]]; if(gp!==gq) return gp-gq;
+      var cp=info[p].conso,cq=info[q].conso; if(cp===null) cp=-1e9; if(cq===null) cq=-1e9;
+      return lev[p]==='Négatif'?(cp-cq):(cq-cp); });
+    var LIM=30, total=rk.length; rk=rk.slice(0,LIM);
+    var r0=H+2;
+    rk.forEach(function(k,j){
+      var m=list[k], x=info[k], L=LV[LVI[lev[k]]], r=r0+j, nm=String(m.name||'—')+' · '+String(m.meter||'');
+      if(nm.length>42) nm=nm.slice(0,41)+'…';
+      var base={font:{sz:10},border:box()};
+      span(r,8,9,nm,base);
+      put(r,10,x.conso===null?'':x.conso,{fill:{fgColor:{rgb:L[3]}},font:{bold:true,sz:10,color:{rgb:L[2]}},alignment:{horizontal:'center'},border:box()},'#,##0.##');
+      put(r,11,lev[k],{fill:{fgColor:{rgb:L[3]}},font:{bold:true,sz:10,color:{rgb:L[2]}},alignment:{horizontal:'center'},border:box()});
+      var why=lev[k]==='Négatif'?'Nouvel index inférieur à l’ancien index.':(lev[k]==='Anomalie'?String(m.anomaly||'').replace(/_/g,' '):(m.type==='EAU'?SRPSmart.why(m,x.conso):'Au-dessus du seuil (200 kWh).'));
+      put(r,12,why,{font:{sz:9,color:{rgb:'595959'}},border:box(),alignment:{wrapText:false}});
+    });
+    var rEnd=r0+rk.length;
+    if(!rk.length){ span(r0,8,12,'Rien à surveiller : aucune consommation anormale.',{font:{sz:10,color:{rgb:'166534'}},border:box()}); rEnd=r0+1; }
+    meta.bar={r1:r0+1,r2:r0+Math.min(15,rk.length)};
+    meta.barN=Math.min(15,rk.length);
+    meta.barCats=rk.slice(0,15).map(function(k){ var nm=String(list[k].name||'—'); return (nm.length>24?nm.slice(0,23)+'…':nm)+' · '+String(list[k].meter||''); });
+    meta.barVals=rk.slice(0,15).map(function(k){ return info[k].conso; });
+    meta.doughRow0=H+13;                                  // ancrage (0-based) de l'anneau : sous le tableau des niveaux
+    meta.barRow0=H+13+17;
+    var note=(total>LIM?('+ '+(total-LIM)+' autre(s) cas : voir la feuille « Relevé ».  '):'')+'Très élevée = au moins 2× le seuil d’alerte. Seuil : '+(cfg.fixed>0?('> '+cfg.fixed+' m³ ou '):'')+(cfg.smart?('≥ ×'+cfg.factor+' la conso habituelle du compteur (min. '+cfg.minM3+' m³)'):'seuil fixe seul')+'.';
+    span(rEnd,8,12,note,{font:{italic:true,sz:9,color:{rgb:'595959'}}});
+    /* avancement par tournée */
+    var T={};
+    list.forEach(function(m,k){ var t=String(m.tour||(typeof tourName!=='undefined'?tourName:'')||'(sans tournée)'); var o=T[t]||(T[t]={n:0,l:0}); o.n++; if(info[k].cur!==null) o.l++; });
+    var tk=Object.keys(T).sort(function(p,q){return T[q].n-T[p].n;}).slice(0,15), r1=rEnd+2;
+    put(r1,8,'Avancement par tournée',{font:{bold:true,sz:12,color:{rgb:NAVY}}});
+    span(r1+1,8,9,'Tournée',TH); put(r1+1,10,'Relevés',TH); put(r1+1,11,'Avancement',TH);
+    tk.forEach(function(t,j){
+      var o=T[t], pc=o.n?o.l/o.n:0, col=pc>=0.8?['E2EFDA','375623']:(pc>=0.5?['FFF2CC','9C6500']:['FCE4D6','C55A11']), r=r1+2+j;
+      span(r,8,9,t,{font:{sz:10},border:box()});
+      put(r,10,o.l+' / '+o.n,{font:{sz:10},alignment:{horizontal:'center'},border:box()});
+      put(r,11,pc,{fill:{fgColor:{rgb:col[0]}},font:{bold:true,sz:10,color:{rgb:col[1]}},alignment:{horizontal:'center'},border:box()},'0%');
+    });
+    var last=Math.max(rEnd,r1+1+tk.length,H+2+LV.length);
+    ws['!ref']=XLSX.utils.encode_range({s:{r:0,c:0},e:{r:Math.max(last,meta.barRow0+16),c:12}});
+    ws['!cols']=COLS.map(function(w){return {wch:w};});
+    ws['!merges']=merges;
+    var rows=[]; rows[0]={hpt:32}; rows[3]={hpt:38}; rows[6]={hpt:38}; rows[2]={hpt:18}; rows[5]={hpt:18};
+    ws['!rows']=rows;
+    return {ws:ws,meta:meta};
+  }
+
+  /* ----- graphiques natifs (anneau + barres) injectés dans le .xlsx ----- */
+  function esc(s){ return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+  function strCache(a){ return '<c:strCache><c:ptCount val="'+a.length+'"/>'+a.map(function(v,i){return '<c:pt idx="'+i+'"><c:v>'+esc(v)+'</c:v></c:pt>';}).join('')+'</c:strCache>'; }
+  function numCache(a,f){ return '<c:numCache><c:formatCode>'+(f||'General')+'</c:formatCode><c:ptCount val="'+a.length+'"/>'+a.map(function(v,i){return (v===null||v==='')?'':'<c:pt idx="'+i+'"><c:v>'+v+'</c:v></c:pt>';}).join('')+'</c:numCache>'; }
+  var NS='xmlns:c="http://schemas.openxmlformats.org/drawingml/2006/chart" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"';
+  function title(t){ return '<c:title><c:tx><c:rich><a:bodyPr/><a:lstStyle/><a:p><a:pPr><a:defRPr sz="1300" b="1"/></a:pPr><a:r><a:rPr lang="fr-FR" sz="1300" b="1"/><a:t>'+esc(t)+'</a:t></a:r></a:p></c:rich></c:tx><c:overlay val="0"/></c:title><c:autoTitleDeleted val="0"/>'; }
+  var TAIL='<c:plotVisOnly val="1"/><c:dispBlanksAs val="gap"/></c:chart><c:spPr><a:solidFill><a:srgbClr val="FFFFFF"/></a:solidFill><a:ln><a:solidFill><a:srgbClr val="BFC8D8"/></a:solidFill></a:ln></c:spPr></c:chartSpace>';
+  function doughnutXml(meta){
+    var cats=LV.map(function(l){return l[0];}), q="'Analyse'!";
+    var dpt=LV.map(function(l,i){ return '<c:dPt><c:idx val="'+i+'"/><c:bubble3D val="0"/><c:spPr><a:solidFill><a:srgbClr val="'+l[1]+'"/></a:solidFill><a:ln w="12700"><a:solidFill><a:srgbClr val="FFFFFF"/></a:solidFill></a:ln></c:spPr></c:dPt>'; }).join('');
+    return '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><c:chartSpace '+NS+'><c:roundedCorners val="0"/><c:chart>'+title('Répartition des niveaux')+
+      '<c:plotArea><c:layout/><c:doughnutChart><c:varyColors val="1"/><c:ser><c:idx val="0"/><c:order val="0"/><c:tx><c:strRef><c:f>'+q+'$C$'+(meta.dough.r1-1)+'</c:f>'+strCache(['Compteurs'])+'</c:strRef></c:tx>'+dpt+
+      '<c:dLbls><c:numFmt formatCode="0;;;" sourceLinked="0"/><c:spPr><a:noFill/><a:ln><a:noFill/></a:ln></c:spPr><c:showLegendKey val="0"/><c:showVal val="1"/><c:showCatName val="0"/><c:showSerName val="0"/><c:showPercent val="0"/><c:showBubbleSize val="0"/><c:showLeaderLines val="0"/></c:dLbls>'+
+      '<c:cat><c:strRef><c:f>'+q+'$B$'+meta.dough.r1+':$B$'+meta.dough.r2+'</c:f>'+strCache(cats)+'</c:strRef></c:cat><c:val><c:numRef><c:f>'+q+'$C$'+meta.dough.r1+':$C$'+meta.dough.r2+'</c:f>'+numCache(meta.doughVals)+'</c:numRef></c:val></c:ser>'+
+      '<c:firstSliceAng val="0"/><c:holeSize val="55"/></c:doughnutChart></c:plotArea><c:legend><c:legendPos val="b"/><c:overlay val="0"/></c:legend>'+TAIL;
+  }
+  function barXml(meta){
+    var q="'Analyse'!";
+    return '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><c:chartSpace '+NS+'><c:roundedCorners val="0"/><c:chart>'+title('Principaux écarts de consommation (m³)')+
+      '<c:plotArea><c:layout/><c:barChart><c:barDir val="bar"/><c:grouping val="clustered"/><c:varyColors val="0"/><c:ser><c:idx val="0"/><c:order val="0"/><c:tx><c:strRef><c:f>'+q+'$K$'+(meta.bar.r1-1)+'</c:f>'+strCache(['m³'])+'</c:strRef></c:tx>'+
+      '<c:spPr><a:solidFill><a:srgbClr val="'+BLUE+'"/></a:solidFill></c:spPr><c:invertIfNegative val="1"/>'+
+      '<c:dLbls><c:numFmt formatCode="#,##0.#" sourceLinked="0"/><c:spPr><a:noFill/><a:ln><a:noFill/></a:ln></c:spPr><c:showLegendKey val="0"/><c:showVal val="1"/><c:showCatName val="0"/><c:showSerName val="0"/><c:showPercent val="0"/><c:showBubbleSize val="0"/></c:dLbls>'+
+      '<c:cat><c:strRef><c:f>'+q+'$I$'+meta.bar.r1+':$I$'+meta.bar.r2+'</c:f>'+strCache(meta.barCats)+'</c:strRef></c:cat><c:val><c:numRef><c:f>'+q+'$K$'+meta.bar.r1+':$K$'+meta.bar.r2+'</c:f>'+numCache(meta.barVals,'#,##0.##')+'</c:numRef></c:val>'+
+      '<c:extLst><c:ext uri="{6F2FDCE9-48DA-4B69-8628-5D25D57E5C99}" xmlns:c14="http://schemas.microsoft.com/office/drawing/2007/8/2/chart"><c14:invertSolidFillFmt><c14:spPr><a:solidFill><a:srgbClr val="C00000"/></a:solidFill></c14:spPr></c14:invertSolidFillFmt></c:ext></c:extLst></c:ser>'+
+      '<c:gapWidth val="45"/><c:axId val="10"/><c:axId val="100"/></c:barChart>'+
+      '<c:catAx><c:axId val="10"/><c:scaling><c:orientation val="maxMin"/></c:scaling><c:delete val="0"/><c:axPos val="l"/><c:numFmt formatCode="General" sourceLinked="0"/><c:majorTickMark val="none"/><c:minorTickMark val="none"/><c:tickLblPos val="low"/><c:crossAx val="100"/><c:crosses val="autoZero"/><c:auto val="1"/><c:lblAlgn val="ctr"/><c:lblOffset val="100"/><c:noMultiLvlLbl val="1"/></c:catAx>'+
+      '<c:valAx><c:axId val="100"/><c:scaling><c:orientation val="minMax"/></c:scaling><c:delete val="0"/><c:axPos val="t"/><c:majorGridlines><c:spPr><a:ln><a:solidFill><a:srgbClr val="E5E7EB"/></a:solidFill></a:ln></c:spPr></c:majorGridlines><c:numFmt formatCode="#,##0" sourceLinked="0"/><c:majorTickMark val="none"/><c:minorTickMark val="none"/><c:tickLblPos val="nextTo"/><c:crossAx val="10"/><c:crosses val="autoZero"/><c:crossBetween val="between"/></c:valAx></c:plotArea>'+TAIL;
+  }
+  function anchor(id,rId,row0,cx,cy,name){
+    return '<xdr:oneCellAnchor><xdr:from><xdr:col>1</xdr:col><xdr:colOff>0</xdr:colOff><xdr:row>'+row0+'</xdr:row><xdr:rowOff>0</xdr:rowOff></xdr:from><xdr:ext cx="'+cx+'" cy="'+cy+'"/><xdr:graphicFrame macro=""><xdr:nvGraphicFramePr><xdr:cNvPr id="'+id+'" name="'+name+'"/><xdr:cNvGraphicFramePr/></xdr:nvGraphicFramePr><xdr:xfrm><a:off x="0" y="0"/><a:ext cx="0" cy="0"/></xdr:xfrm><a:graphic><a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/chart"><c:chart xmlns:c="http://schemas.openxmlformats.org/drawingml/2006/chart" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" r:id="'+rId+'"/></a:graphicData></a:graphic></xdr:graphicFrame><xdr:clientData/></xdr:oneCellAnchor>';
+  }
+  async function inject(u8,meta){
+    var zip=await JSZip.loadAsync(u8);
+    var wbx=await zip.file('xl/workbook.xml').async('string');
+    var rels=await zip.file('xl/_rels/workbook.xml.rels').async('string');
+    var m=wbx.match(/<sheet [^>]*name="Analyse"[^>]*>/); if(!m) throw new Error('feuille Analyse introuvable');
+    var rid=(m[0].match(/r:id="([^"]+)"/)||[])[1];
+    var rm=rels.match(new RegExp('<Relationship [^>]*Id="'+rid+'"[^>]*>')); if(!rm) throw new Error('relation introuvable');
+    var tg=(rm[0].match(/Target="([^"]+)"/)||[])[1].replace(/^\//,''); var sheetPath=tg.indexOf('xl/')===0?tg:'xl/'+tg;
+    var sx=await zip.file(sheetPath).async('string');
+    if(/<drawing[ >]/.test(sx)||/<legacyDrawing/.test(sx)) throw new Error('dessin déjà présent');
+    var relPath=sheetPath.replace('worksheets/','worksheets/_rels/')+'.rels', relx=zip.file(relPath)?await zip.file(relPath).async('string'):null;
+    if(relx&&/Id="rIdSrpDr"/.test(relx)) throw new Error('déjà injecté');
+    var R='<Relationship Id="rIdSrpDr" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/drawing" Target="../drawings/drawingSrp1.xml"/>';
+    zip.file(relPath, relx?relx.replace('</Relationships>',R+'</Relationships>'):'<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'+R+'</Relationships>');
+    if(!/xmlns:r=/.test(sx.match(/<worksheet[^>]*>/)[0])) sx=sx.replace('<worksheet','<worksheet xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"');
+    sx=sx.replace(/<sheetView(?![a-zA-Z])/,'<sheetView showGridLines="0"');
+    if(!/<sheetView[^>]*showGridLines/.test(sx)) throw new Error('vue introuvable');
+    sx=sx.replace('</worksheet>','<drawing r:id="rIdSrpDr"/></worksheet>');
+    zip.file(sheetPath,sx);
+    var dr='<?xml version="1.0" encoding="UTF-8" standalone="yes"?><xdr:wsDr xmlns:xdr="http://schemas.openxmlformats.org/drawingml/2006/spreadsheetDrawing" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main">'+
+      anchor(2,'rId1',meta.doughRow0,4320000,3240000,'Anneau niveaux')+(meta.barN>0?anchor(3,'rId2',meta.barRow0,6840000,Math.max(2160000,260000*meta.barN+900000),'Barres écarts'):'')+'</xdr:wsDr>';
+    zip.file('xl/drawings/drawingSrp1.xml',dr);
+    zip.file('xl/drawings/_rels/drawingSrp1.xml.rels','<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/chart" Target="../charts/chartSrp1.xml"/>'+(meta.barN>0?'<Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/chart" Target="../charts/chartSrp2.xml"/>':'')+'</Relationships>');
+    zip.file('xl/charts/chartSrp1.xml',doughnutXml(meta));
+    if(meta.barN>0) zip.file('xl/charts/chartSrp2.xml',barXml(meta));
+    var ct=await zip.file('[Content_Types].xml').async('string');
+    var add='<Override PartName="/xl/drawings/drawingSrp1.xml" ContentType="application/vnd.openxmlformats-officedocument.drawing+xml"/><Override PartName="/xl/charts/chartSrp1.xml" ContentType="application/vnd.openxmlformats-officedocument.drawingml.chart+xml"/>'+(meta.barN>0?'<Override PartName="/xl/charts/chartSrp2.xml" ContentType="application/vnd.openxmlformats-officedocument.drawingml.chart+xml"/>':'');
+    zip.file('[Content_Types].xml',ct.replace('</Types>',add+'</Types>'));
+    return await zip.generateAsync({type:'uint8array',compression:'DEFLATE'});
   }
 
   var prevBuild=window.buildExportWorkbook;
@@ -16966,13 +17075,28 @@ if(document.readyState==='complete') setTimeout(init,0); else window.addEventLis
     try{
       var list=(typeof v231ExportOrdered==='function')?v231ExportOrdered():allMetersData;
       patchReleve(wb,list);
-      var an=buildAnalyse(list);
-      wb.Sheets['Analyse']=an; delete wb.Sheets['Synthèse'];
+      var d=buildDash(list);
+      wb.Sheets['Analyse']=d.ws; delete wb.Sheets['Synthèse'];
       wb.SheetNames=['Analyse'].concat(wb.SheetNames.filter(function(n){return n!=='Analyse'&&n!=='Synthèse';}));
-    }catch(e){ console.error('V403 export :',e); }
+      try{ Object.defineProperty(wb,'__srp',{value:d.meta,enumerable:false,configurable:true}); }catch(_){ wb.__srp=d.meta; }
+    }catch(e){ console.error('V406 export :',e); }
     return wb;
   };
-  window.SRPExportV403={stateOf:stateOf,buildAnalyse:buildAnalyse,patchReleve:patchReleve};
+  // Octets du .xlsx avec graphiques ; en cas de problème : fichier sans graphiques (jamais d'échec d'export)
+  window.SRPXlsxBytes=async function(wb){
+    var u8=XLSX.write(wb,{bookType:'xlsx',type:'array'});
+    try{ if(wb&&wb.__srp&&typeof JSZip!=='undefined') return await inject(u8 instanceof Uint8Array?u8:new Uint8Array(u8),wb.__srp); }
+    catch(e){ console.warn('V406 graphiques non ajoutés :',e); }
+    return u8;
+  };
+  window.SRPWriteXlsx=async function(wb,name){
+    var bytes=await window.SRPXlsxBytes(wb);
+    var blob=new Blob([bytes],{type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'});
+    var url=URL.createObjectURL(blob), a=document.createElement('a');
+    a.href=url; a.download=name; document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(function(){ URL.revokeObjectURL(url); },60000);
+  };
+  window.SRPExportV403={stateOf:stateOf,buildDash:buildDash,patchReleve:patchReleve,inject:inject,levelOf:levelOf};
 })();
 </script>
 </body>
