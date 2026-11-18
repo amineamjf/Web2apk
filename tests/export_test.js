@@ -37,7 +37,7 @@ assert.strictEqual(JSON.stringify(wb.SheetNames),JSON.stringify(['Analyse','Rele
   assert(/s/.test(g('B2').z||''),'format secondes: '+g('B2').z);
   const read=data.map((m,i)=>({i,t:m.readAt?Date.parse(m.readAt):null})).filter(x=>x.t!==null).sort((a,b)=>a.t-b.t||a.i-b.i);
   read.forEach((x,k)=>assert.strictEqual(g('F'+(x.i+2)).v,k+1,'ordre ligne '+(x.i+2)));
-  assert.strictEqual((g('F11')&&g('F11').v)??'','');            // compteur 9 non lu : pas d'ordre
+  assert.strictEqual((g('F10')&&g('F10').v)??'','');            // compteur 9 non lu : pas d'ordre
   // tableau de bord
   const an=rb.Sheets['Analyse'], txt=XLSX.utils.sheet_to_csv(an);
   ['TABLEAU DE BORD','Compteurs suivis','Très élevées','Répartition par niveau','À surveiller','Avancement par tournée','Photos : 1'].forEach(k=>assert(txt.includes(k),'« '+k+' » absent'));
