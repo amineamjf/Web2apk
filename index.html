@@ -16983,7 +16983,7 @@ if(document.readyState==='complete') setTimeout(init,0); else window.addEventLis
     meta.barCats=rk.slice(0,15).map(function(k){ var nm=String(list[k].name||'—'); return (nm.length>24?nm.slice(0,23)+'…':nm)+' · '+String(list[k].meter||''); });
     meta.barVals=rk.slice(0,15).map(function(k){ return info[k].conso; });
     meta.doughRow0=H+13;                                  // ancrage (0-based) de l'anneau : sous le tableau des niveaux
-    meta.barRow0=H+13+17;
+    meta.barRow0=H+13+22;
     var note=(total>LIM?('+ '+(total-LIM)+' autre(s) cas : voir la feuille « Relevé ».  '):'')+'Très élevée = au moins 2× le seuil d’alerte. Seuil : '+(cfg.fixed>0?('> '+cfg.fixed+' m³ ou '):'')+(cfg.smart?('≥ ×'+cfg.factor+' la conso habituelle du compteur (min. '+cfg.minM3+' m³)'):'seuil fixe seul')+'.';
     span(rEnd,8,12,note,{font:{italic:true,sz:9,color:{rgb:'595959'}}});
     /* avancement par tournée */
@@ -17055,6 +17055,9 @@ if(document.readyState==='complete') setTimeout(init,0); else window.addEventLis
     if(!/xmlns:r=/.test(sx.match(/<worksheet[^>]*>/)[0])) sx=sx.replace('<worksheet','<worksheet xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"');
     sx=sx.replace(/<sheetView(?![a-zA-Z])/,'<sheetView showGridLines="0"');
     if(!/<sheetView[^>]*showGridLines/.test(sx)) throw new Error('vue introuvable');
+    // impression / PDF : paysage, une page de large
+    if(!/<sheetPr/.test(sx)) sx=sx.replace(/(<worksheet[^>]*>)/,'$1<sheetPr><pageSetUpPr fitToPage="1"/></sheetPr>');
+    if(!/<pageSetup/.test(sx)) sx=/<pageMargins[^>]*\/>/.test(sx)?sx.replace(/(<pageMargins[^>]*\/>)/,'$1<pageSetup orientation="landscape" fitToWidth="1" fitToHeight="0"/>'):sx;
     sx=sx.replace('</worksheet>','<drawing r:id="rIdSrpDr"/></worksheet>');
     zip.file(sheetPath,sx);
     var dr='<?xml version="1.0" encoding="UTF-8" standalone="yes"?><xdr:wsDr xmlns:xdr="http://schemas.openxmlformats.org/drawingml/2006/spreadsheetDrawing" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main">'+
