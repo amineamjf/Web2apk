@@ -3,21 +3,20 @@ const fs=require('fs'), vm=require('vm'), assert=require('assert');
 const XLSX=require('xlsx-js-style');
 const html=fs.readFileSync('index.html','utf8');
 const grab=id=>{const m=html.match(new RegExp('<script id="'+id+'">([\\s\\S]*?)</script>')); assert(m,id+' introuvable'); return m[1];};
-const win={}; const ctx=vm.createContext({window:win,XLSX,console,localStorage:{getItem(){return null},setItem(){}},document:{addEventListener(){},readyState:'complete'},Date,JSON,Math,Object,Array,String,Number,isFinite,isNaN,parseFloat});
-win.window=win; Object.assign(ctx,{});
+const ctx=vm.createContext({XLSX,console,localStorage:{getItem(){return null},setItem(){}},document:{addEventListener(){},readyState:'complete'},Date,JSON,Math,Object,Array,String,Number,isFinite,isNaN,parseFloat});
+ctx.window=ctx;
 const mk=(n,cur,t,extra)=>Object.assign({meter:'M'+n,name:'CLIENT '+n,tour:'T1',type:'EAU',prev:100,current:cur,anomaly:'RAS',history:{},readAt:t},extra||{});
 const data=[mk(1,110,'2026-11-18T09:15:42.000Z'),mk(2,90,'2026-11-18T09:10:07.000Z'),mk(3,'',undefined),mk(4,180,'2026-11-18T09:20:00.000Z'),mk(5,105,'2026-11-18T09:12:30.000Z',{anomaly:'BLOQUE'})];
 ctx.allMetersData=data; ctx.tourName='T1'; ctx.v231ExportOrdered=()=>data;
 vm.runInContext(grab('srp-smart'),ctx);
 // l'export d'origine est simulé : feuilles « Synthèse » + « Relevé » (colonne heure en texte, comme avant)
-ctx.window.buildExportWorkbook=function(){
+ctx.buildExportWorkbook=function(){
   const wb=XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb,XLSX.utils.aoa_to_sheet([['x']]),'Synthèse');
   const rows=[['N° Compteur','Date/Heure Relevé','Index']].concat(data.map(m=>[m.meter,m.readAt?'18/11/2026 09:xx':'',m.current]));
   XLSX.utils.book_append_sheet(wb,XLSX.utils.aoa_to_sheet(rows),'Relevé'); return wb; };
-ctx.buildExportWorkbook=ctx.window.buildExportWorkbook;
 vm.runInContext(grab('srp-export-v403'),ctx);
-const wb=ctx.window.buildExportWorkbook();
+const wb=ctx.buildExportWorkbook();
 assert.deepStrictEqual(wb.SheetNames,['Analyse','Relevé'],'feuilles: '+wb.SheetNames);
 const buf=XLSX.write(wb,{type:'buffer',bookType:'xlsx',cellStyles:true});
 const rb=XLSX.read(buf,{cellDates:false,cellStyles:true}); assert.deepStrictEqual(rb.SheetNames,['Analyse','Relevé']);
