@@ -14,6 +14,57 @@
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
     <script src="./android-bridge.js"></script>
+    <script id="srp-smart">
+    /* V401 — Alertes intelligentes : compare la consommation à l'HISTORIQUE du compteur (médiane des derniers mois),
+       en plus d'un seuil fixe facultatif. Réglable dans le menu « 🧠 Alertes intelligentes ». */
+    (function(){
+      'use strict';
+      var KEY='SmartRV_SmartAlerts';
+      var DEF={smart:true,fixed:25,factor:2,minM3:8,win:4,minHist:2};
+      var MONTHS=['Janvier','Février','Mars','Avril','Mai','Juin','Juillet','Août','Septembre','Octobre','Novembre','Décembre'];
+      function load(){ var o=null; try{ o=JSON.parse(localStorage.getItem(KEY)||'null'); }catch(_){} var s={}; for(var k in DEF){ s[k]=(o&&typeof o[k]===typeof DEF[k])?o[k]:DEF[k]; } return s; }
+      var S=load();
+      function save(){ try{ localStorage.setItem(KEY,JSON.stringify(S)); }catch(_){} }
+      function mod(n){ return ((n%12)+12)%12; }
+      function monthOf(m){ var d=(m&&m.readAt)?new Date(m.readAt):new Date(); if(isNaN(d.getTime())) d=new Date(); return d.getMonth(); }
+      function median(a){ if(!a.length) return 0; var s=a.slice().sort(function(x,y){return x-y;}), n=s.length; return n%2?s[(n-1)/2]:(s[n/2-1]+s[n/2])/2; }
+      function fmt(x){ return (Math.round(x*10)/10).toString().replace('.',','); }
+      // Consommations mensuelles récentes (du plus ancien au plus récent), à partir de m.history (index par mois) et m.prev.
+      function recent(m){
+        var h=m&&m.history; if(!h) return [];
+        var prev=Number(m.prev), cur=monthOf(m), end=-1;
+        function raw(k){ var v=h[MONTHS[mod(k)]]; return (typeof v==='number'&&isFinite(v))?v:null; }
+        if(isFinite(prev)) for(var d=1;d<=12;d++){ if(raw(cur-d)===prev){ end=mod(cur-d); break; } }
+        if(end<0) end=mod(cur-1);
+        function ix(k){ var v=raw(k); if(v===null && mod(k)===end && isFinite(prev)) return prev; return v; }
+        var vals=[];
+        for(var i=0;i<S.win;i++){ var a=ix(end-i), b=ix(end-i-1); if(a===null||b===null) break; var c=a-b; if(c<0) break; vals.unshift(c); }
+        return vals;
+      }
+      function ev(m,c){
+        if(!m||m.type!=='EAU'||typeof c!=='number'||!isFinite(c)||c<=0) return null;
+        if(S.fixed>0 && c>S.fixed) return {kind:'fixed'};
+        if(!S.smart) return null;
+        var v=recent(m); if(v.length<S.minHist) return null;
+        var base=median(v), thr=Math.max(S.minM3,S.factor*base);
+        if(c>=thr) return {kind:'smart',base:base,vals:v,thr:thr};
+        return null;
+      }
+      function why(m,c){
+        var r=ev(m,c); if(!r) return '';
+        if(r.kind==='fixed') return 'Au-dessus du seuil fixe ('+fmt(S.fixed)+' m³).';
+        var t='Habituellement ~ '+fmt(r.base)+' m³/mois (derniers mois : '+r.vals.map(fmt).join(', ')+')';
+        if(r.base>0) t+=' — ce relevé = ×'+fmt(c/r.base);
+        return t+'.';
+      }
+      window.SRPSmart={
+        high:function(m,c){ return !!ev(m,c); }, why:why, recent:recent, eval:ev,
+        get:function(){ return Object.assign({},S); },
+        set:function(o){ for(var k in DEF){ if(o&&o[k]!==undefined) S[k]=o[k]; } save(); },
+        reset:function(){ S=Object.assign({},DEF); save(); }, defaults:DEF, fmt:fmt, MONTHS:MONTHS
+      };
+    })();
+    </script>
     <script>
         if ('serviceWorker' in navigator) {
             window.addEventListener('load', function () {
@@ -3288,7 +3339,7 @@
             const has=Number.isFinite(prev)&&Number.isFinite(cur);
             const conso=has?(cur-prev):NaN;
             const neg=has&&cur<prev, stopped=has&&cur===prev;
-            const high=Number.isFinite(conso)&&((m.type==='EAU'&&conso>25)||(m.type==='ELEC'&&conso>200));
+            const high=Number.isFinite(conso)&&((m.type==='EAU'&&SRPSmart.high(m,conso))||(m.type==='ELEC'&&conso>200));
             const sel=document.getElementById('anomalySelect');
             const opt=sel?Array.from(sel.options).find(o=>o.value===an):null;
             const anLabel=opt?opt.textContent.trim():an.replace(/_/g,' ');
@@ -4979,7 +5030,7 @@
             const stoppedStatus = hasReadingStatus && Number.isFinite(prevStatus) && currStatus === prevStatus;
             const unitStatus = m.type === 'ELEC' ? 'kWh' : 'm³';
             const consoStatus = (hasReadingStatus && Number.isFinite(prevStatus)) ? (currStatus - prevStatus) : NaN;
-            const highStatus = Number.isFinite(consoStatus) && ((m.type === 'EAU' && consoStatus > 25) || (m.type === 'ELEC' && consoStatus > 200));
+            const highStatus = Number.isFinite(consoStatus) && ((m.type === 'EAU' && SRPSmart.high(m, consoStatus)) || (m.type === 'ELEC' && consoStatus > 200));
             const blockedStatus = stoppedStatus && String(m.anomaly || 'RAS').toUpperCase() === 'BLOQUE';
             if (meterTopCard) {
                 meterTopCard.classList.remove('status-normal','status-negative','status-high','status-stopped','status-blocked','bg-emerald-600','border-emerald-300','bg-amber-500','border-amber-300','bg-blue-700','border-blue-400');
@@ -5385,9 +5436,9 @@
                     showAlert('negative', 'Consommation négative', `Nouvel index ${current} inférieur à l’ancien index ${previous}. Consommation = ${conso} ${unit}.`);
                     return false;
                 }
-                const high = (m.type === 'EAU' && conso > 25) || (m.type === 'ELEC' && conso > 200);
+                const high = (m.type === 'EAU' && SRPSmart.high(m, conso)) || (m.type === 'ELEC' && conso > 200);
                 if (high && !warningAcknowledged(m, 'high')) {
-                    showAlert('high', 'Consommation élevée', `Attention : consommation ${conso} ${unit}, au-dessus du seuil autorisé.`);
+                    showAlert('high', 'Consommation élevée', `Attention : consommation ${conso} ${unit}. ${m.type === 'EAU' ? SRPSmart.why(m, conso) : 'Au-dessus du seuil autorisé.'}`);
                     const btn = document.getElementById('alertPrimaryBtn');
                     if (btn) btn.onclick = async function(){ acknowledgeWarning(m, 'high'); hideAlert(); await persistCurrentMeter(m); await nextMeter(); };
                     return false;
@@ -5665,7 +5716,7 @@
             const prev = Number(m?.prev), curr = Number(m?.current);
             if (!Number.isFinite(prev) || !Number.isFinite(curr) || curr < prev) return false;
             const c = curr - prev;
-            return m?.type === 'EAU' ? c > 25 : c > 500;
+            return m?.type === 'EAU' ? SRPSmart.high(m, c) : c > 500;
         }
 
         function setControlFilter(filter) {
@@ -7368,7 +7419,7 @@
                 let etat = 'NON RELEVÉ';
                 if (m.anomaly && m.anomaly !== 'RAS') etat = 'ANOMALIE';
                 else if (conso !== '' && conso < 0) etat = 'CONSOMMATION NÉGATIVE';
-                else if (conso !== '' && ((m.type === 'EAU' && conso > 25) || (m.type === 'ELEC' && conso > 200))) etat = 'CONSOMMATION ÉLEVÉE';
+                else if (conso !== '' && ((m.type === 'EAU' && SRPSmart.high(m, conso)) || (m.type === 'ELEC' && conso > 200))) etat = 'CONSOMMATION ÉLEVÉE';
                 else if (conso !== '') etat = 'NORMAL';
 
                 const readAtDate = m.readAt ? new Date(m.readAt) : null;
@@ -12091,7 +12142,7 @@ html body.v176-hide-prev.v176-hide-prev #entryPage .entry-previous-box{display:n
    Bouton « Vérifier les mises à jour » dans le menu de la tournée. */
 (function(){
   var busy=false;
-  var BUILD_CODE='V400-IMPORT-2026-11-18'; // change ce texte à chaque nouvelle version envoyée, pour vérifier visuellement qu'elle est bien chargée
+  var BUILD_CODE='V401-SMART-2026-11-18'; // change ce texte à chaque nouvelle version envoyée, pour vérifier visuellement qu'elle est bien chargée
   function say(m,t){ try{ showToast(m,t||'info'); }catch(_){ } }
   window.v210CheckUpdate=function(){
     if(busy) return;
@@ -15684,10 +15735,10 @@ html body #entryPage.v296 .page-content{margin-top:-6px !important;}
         var an=String((sel&&sel.value)||m.anomaly||'RAS'); if(an==='INHABITE'||an==='BLOQUE') return r;
         var k=key(m)+'|'+raw; if(acked[k]) return r;
         var unit=m.type==='ELEC'?'kWh':'m³', conso=c-p, kind=null;
-        if(c<p) kind='negative'; else if((m.type==='EAU'&&conso>25)||(m.type==='ELEC'&&conso>200)) kind='high';
+        if(c<p) kind='negative'; else if((m.type==='EAU'&&SRPSmart.high(m,conso))||(m.type==='ELEC'&&conso>200)) kind='high';
         if(!kind) return r;
         if(kind==='negative') showAlert('negative','Consommation négative','Nouvel index '+c+' inférieur à l’ancien index '+p+'. Consommation = '+conso+' '+unit+'.');
-        else showAlert('high','Consommation élevée','Attention : consommation '+conso+' '+unit+', au-dessus du seuil autorisé.');
+        else showAlert('high','Consommation élevée','Attention : consommation '+conso+' '+unit+'. '+(m.type==='EAU'?SRPSmart.why(m,conso):'Au-dessus du seuil autorisé.'));
         var btn=document.getElementById('alertPrimaryBtn');
         if(btn){
           var f=btn.onclick;
@@ -16591,6 +16642,162 @@ if(document.readyState==='complete') setTimeout(init,0); else window.addEventLis
     return prevApply.apply(this,arguments);
   };
   window.SRPImportV400={pickSheet:pickSheet,latestKnown:latestKnown,datedCols:datedCols,bestHeader:bestHeader};
+})();
+</script>
+<script id="srp-smart-ui">
+// V401 — (1) réglages « Alertes intelligentes » ; (2) import : colonnes « Index MM/AAAA » reliées automatiquement à l'historique ;
+//        (3) rapport PDF d'analyse (résumé, par tournée, liste à vérifier avec le motif intelligent).
+(function(){
+  'use strict';
+  function $(id){ return document.getElementById(id); }
+  function toast(m,t){ try{ showToast(m,t||'info'); }catch(_){} }
+  function esc(s){ return String(s==null?'':s).replace(/[&<>"]/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c];}); }
+  function refreshAll(){ try{ if(typeof updateCounts==='function') updateCounts(); }catch(_){} try{ if(typeof renderControlPage==='function') renderControlPage(); }catch(_){} try{ if(typeof renderCurrentMeter==='function') renderCurrentMeter(); }catch(_){} }
+
+  /* ---------- (1) réglages ---------- */
+  function openSettings(){
+    var old=$('srpSmartModal'); if(old) old.remove();
+    var s=SRPSmart.get(), md=document.createElement('div'); md.id='srpSmartModal';
+    md.style.cssText='position:fixed;inset:0;z-index:100000;background:rgba(15,23,42,.55);display:flex;align-items:center;justify-content:center;padding:16px';
+    var inp='width:100%;border:1px solid #cbd5e1;border-radius:10px;padding:9px;font-size:16px;margin:4px 0 12px;background:#fff;color:#0f172a';
+    md.innerHTML='<div style="background:#fff;color:#0f172a;border-radius:16px;max-width:430px;width:100%;max-height:92vh;overflow:auto;padding:18px;font-family:inherit">'
+      +'<div style="font-weight:800;font-size:18px;margin-bottom:4px">🧠 Alertes intelligentes</div>'
+      +'<div style="font-size:13px;color:#475569;margin-bottom:14px">Le compteur est comparé à SON historique : si le relevé dépasse nettement sa consommation habituelle, l’app vous prévient — même sous le seuil fixe.</div>'
+      +'<label style="display:flex;gap:10px;align-items:center;font-weight:700;margin-bottom:12px"><input id="ssSmart" type="checkbox" '+(s.smart?'checked':'')+' style="width:20px;height:20px"> Détection par historique</label>'
+      +'<label style="font-size:13px;font-weight:700">Alerte si la conso est au moins … fois la conso habituelle</label><input id="ssFactor" type="number" step="0.1" min="1" value="'+s.factor+'" style="'+inp+'">'
+      +'<label style="font-size:13px;font-weight:700">…mais jamais en dessous de (m³)</label><input id="ssMin" type="number" step="1" min="0" value="'+s.minM3+'" style="'+inp+'">'
+      +'<label style="font-size:13px;font-weight:700">Nombre de mois d’historique utilisés</label><input id="ssWin" type="number" step="1" min="2" max="11" value="'+s.win+'" style="'+inp+'">'
+      +'<label style="font-size:13px;font-weight:700">Seuil fixe (m³) — vide ou 0 = désactivé</label><input id="ssFixed" type="number" step="1" min="0" value="'+(s.fixed>0?s.fixed:'')+'" style="'+inp+'">'
+      +'<div style="font-size:12px;color:#64748b;margin-bottom:12px">Exemple : habituel 6, 3, 4 m³ (médiane 4). Avec ×2 et minimum 8 → alerte à partir de 8 m³. Sans historique (moins de 2 mois), seul le seuil fixe s’applique. Électricité : seuil inchangé.</div>'
+      +'<div style="display:flex;gap:8px"><button id="ssSave" style="flex:1;background:#0a2a66;color:#fff;border:0;border-radius:10px;padding:11px;font-weight:800">Enregistrer</button>'
+      +'<button id="ssReset" style="background:#e2e8f0;border:0;border-radius:10px;padding:11px;font-weight:700">Défauts</button>'
+      +'<button id="ssClose" style="background:#e2e8f0;border:0;border-radius:10px;padding:11px;font-weight:700">Fermer</button></div></div>';
+    document.body.appendChild(md);
+    function close(){ md.remove(); }
+    md.addEventListener('click',function(e){ if(e.target===md) close(); });
+    $('ssClose').onclick=close;
+    $('ssReset').onclick=function(){ SRPSmart.reset(); close(); refreshAll(); toast('Réglages par défaut rétablis.','success'); };
+    $('ssSave').onclick=function(){
+      var f=Number($('ssFactor').value), mn=Number($('ssMin').value), w=Math.round(Number($('ssWin').value)), fx=Number($('ssFixed').value);
+      SRPSmart.set({smart:$('ssSmart').checked,factor:(isFinite(f)&&f>=1)?f:2,minM3:(isFinite(mn)&&mn>=0)?mn:8,win:(isFinite(w)&&w>=2&&w<=11)?w:4,fixed:(isFinite(fx)&&fx>0)?fx:0});
+      close(); refreshAll(); toast('Alertes intelligentes enregistrées.','success');
+    };
+  }
+  window.srpSmartSettings=openSettings;
+  function addMenuBtn(){
+    var a=$('v172AutoBtn'), sec=a&&a.parentNode; if(!sec||$('srpSmartBtn')) return false;
+    var b=document.createElement('button'); b.type='button'; b.id='srpSmartBtn'; b.className='side-menu-btn';
+    b.textContent='🧠 Alertes intelligentes'; b.onclick=function(){ try{ closeEntrySideMenu(); }catch(_){} openSettings(); };
+    sec.appendChild(b); return true;
+  }
+  (function boot(){ if(addMenuBtn()) return; var n=0,t=setInterval(function(){ if(addMenuBtn()||++n>40) clearInterval(t); },300); })();
+
+  /* ---------- (2) import : « Index MM/AAAA » -> historique des mois ---------- */
+  var HIST=[['mapHistJan',0],['mapHistFeb',1],['mapHistMar',2],['mapHistApr',3],['mapHistMay',4],['mapHistJun',5],['mapHistJul',6],['mapHistAug',7],['mapHistSep',8],['mapHistOct',9],['mapHistNov',10],['mapHistDec',11]];
+  function autoMapHistory(){
+    try{
+      if(!Array.isArray(rawJsonData)||!rawJsonData.length) return;
+      var cols=Object.keys(rawJsonData[0]).map(function(k){ var m=String(k).match(/^\s*index\s+(\d{1,2})\s*\/\s*(\d{4})\s*$/i); return m&&+m[1]>=1&&+m[1]<=12?{k:k,mo:+m[1]-1,p:(+m[2])*12+(+m[1]-1)}:null; }).filter(Boolean).sort(function(a,b){return b.p-a.p;});
+      if(!cols.length) return;
+      var latest=cols[0].p, used={}, n=0;
+      cols.forEach(function(c){
+        if(latest-c.p>11||used[c.mo]) return;
+        var id=HIST[c.mo][0], el=$(id); if(!el||el.value) return;
+        if(Array.prototype.some.call(el.options,function(o){return o.value===c.k;})){ el.value=c.k; used[c.mo]=1; n++; }
+      });
+      if(n) toast(n+' mois d’historique reliés automatiquement.','success');
+    }catch(e){ console.warn('V401 historique auto :',e); }
+  }
+  var prevApply=window.applyMapping;
+  window.applyMapping=async function(){ autoMapHistory(); return prevApply.apply(this,arguments); };
+
+  /* ---------- (3) rapport PDF d'analyse ---------- */
+  function consoOf(m){ var p=Number(m.prev), c=(m.current===''||m.current==null)?NaN:Number(m.current); return (isFinite(p)&&isFinite(c)&&m.prev!==''&&m.prev!=null)?c-p:NaN; }
+  function classify(m){
+    var read=(m.read===true)||(m.current!==''&&m.current!=null)||(m.anomaly&&m.anomaly!=='RAS');
+    var c=consoOf(m), hasC=isFinite(c), anom=m.anomaly&&m.anomaly!=='RAS';
+    var neg=hasC&&c<0;
+    var high=hasC&&c>0&&((m.type==='EAU'&&SRPSmart.high(m,c))||(m.type==='ELEC'&&c>200));
+    return {read:!!read,c:c,hasC:hasC,neg:neg,high:high,anom:!!anom};
+  }
+  function buildPdf(){
+    if(!allMetersData||!allMetersData.length) return toast('Aucune donnée','warn');
+    if(!window.jspdf||!window.jspdf.jsPDF) return toast('Le module PDF n’est pas disponible. Vérifiez la connexion puis réessayez.','warn');
+    try{ saveCurrentInputs(); }catch(_){}
+    var jsPDF=window.jspdf.jsPDF, doc=new jsPDF({unit:'pt',format:'a4'});
+    var W=doc.internal.pageSize.getWidth(), H=doc.internal.pageSize.getHeight(), mx=36, y=0;
+    var NAVY=[10,42,102], now=new Date();
+    var list=allMetersData.filter(function(m){return !m.skipped;}), info=list.map(classify);
+    var tot=list.length, lus=info.filter(function(i){return i.read;}).length;
+    var nHigh=info.filter(function(i){return i.high;}).length, nNeg=info.filter(function(i){return i.neg;}).length, nAn=info.filter(function(i){return i.anom;}).length;
+    var cs=info.filter(function(i){return i.hasC&&i.c>=0;}).map(function(i){return i.c;});
+    var sum=cs.reduce(function(a,b){return a+b;},0), srt=cs.slice().sort(function(a,b){return a-b;}), med=srt.length?srt[Math.floor(srt.length/2)]:0;
+    // bandeau
+    doc.setFillColor(NAVY[0],NAVY[1],NAVY[2]); doc.rect(0,0,W,70,'F');
+    doc.setTextColor(255); doc.setFont('helvetica','bold'); doc.setFontSize(18); doc.text('Smart RV — Rapport d’analyse',mx,32);
+    doc.setFont('helvetica','normal'); doc.setFontSize(9.5);
+    var tn=(typeof tourName!=='undefined'&&tourName)?(' · Tournée '+tourName):'';
+    doc.text('Généré le '+now.toLocaleDateString('fr-FR')+' à '+now.toLocaleTimeString('fr-FR',{hour:'2-digit',minute:'2-digit'})+tn,mx,50);
+    y=88;
+    // cartes
+    var cards=[['Compteurs',tot,[10,42,102]],['Relevés',lus,[22,163,74]],['Restants',tot-lus,[100,116,139]],['Élevées',nHigh,[217,119,6]],['Négatives',nNeg,[220,38,38]],['Anomalies',nAn,[220,38,38]]];
+    var cw=(W-mx*2-5*8)/6;
+    cards.forEach(function(c,i){
+      var x=mx+i*(cw+8);
+      doc.setFillColor(244,247,251); doc.roundedRect(x,y,cw,48,6,6,'F');
+      doc.setFillColor(c[2][0],c[2][1],c[2][2]); doc.rect(x,y+6,3,36,'F');
+      doc.setTextColor(c[2][0],c[2][1],c[2][2]); doc.setFont('helvetica','bold'); doc.setFontSize(17); doc.text(String(c[1]),x+10,y+25);
+      doc.setTextColor(90); doc.setFont('helvetica','normal'); doc.setFontSize(8); doc.text(c[0],x+10,y+39);
+    });
+    y+=62; doc.setTextColor(60); doc.setFontSize(9);
+    doc.text('Consommation totale des relevés : '+Math.round(sum)+' m³   ·   Médiane : '+SRPSmart.fmt(med)+' m³   ·   Détection intelligente : '+(SRPSmart.get().smart?'active':'désactivée')+(SRPSmart.get().fixed>0?'   ·   Seuil fixe : '+SRPSmart.get().fixed+' m³':''),mx,y);
+    y+=18;
+    function title(t){ doc.setTextColor(NAVY[0],NAVY[1],NAVY[2]); doc.setFont('helvetica','bold'); doc.setFontSize(11.5); doc.text(t,mx,y); y+=6; doc.setDrawColor(NAVY[0],NAVY[1],NAVY[2]); doc.setLineWidth(1); doc.line(mx,y,W-mx,y); y+=14; }
+    function head(cols){ doc.setFillColor(NAVY[0],NAVY[1],NAVY[2]); doc.rect(mx,y-10,W-mx*2,15,'F'); doc.setTextColor(255); doc.setFont('helvetica','bold'); doc.setFontSize(8); cols.forEach(function(c){doc.text(c[0],c[1],y);}); y+=13; doc.setTextColor(30); doc.setFont('helvetica','normal'); }
+    function room(n,cols){ if(y+n>H-40){ doc.addPage(); y=44; if(cols) head(cols); } }
+    // par tournée
+    var tr={}; list.forEach(function(m,i){ var t=String(m.tour||'(sans tournée)'); var o=tr[t]||(tr[t]={n:0,l:0,s:0}); o.n++; if(info[i].read) o.l++; if(info[i].hasC&&info[i].c>0) o.s+=info[i].c; });
+    var tks=Object.keys(tr).sort(function(a,b){return tr[b].n-tr[a].n;}).slice(0,25);
+    if(tks.length>1||(tks.length===1&&tks[0]!=='(sans tournée)')){
+      title('Par tournée');
+      var tc=[['TOURNÉE',mx+4],['COMPTEURS',mx+190],['RELEVÉS',mx+260],['% RELEVÉS',mx+325],['CONSO (m³)',mx+400]];
+      head(tc);
+      tks.forEach(function(t,i){ room(16,tc); if(i%2){ doc.setFillColor(246,248,251); doc.rect(mx,y-10,W-mx*2,14,'F'); }
+        var o=tr[t]; doc.setFontSize(8.5); doc.text(t.slice(0,34),mx+4,y); doc.text(String(o.n),mx+190,y); doc.text(String(o.l),mx+260,y); doc.text(Math.round(o.l*100/o.n)+' %',mx+325,y); doc.text(String(Math.round(o.s)),mx+400,y); y+=14; });
+      y+=10;
+    }
+    // à vérifier
+    var rev=[]; list.forEach(function(m,i){ var k=info[i]; if(k.neg) rev.push([0,m,k]); else if(k.high) rev.push([1,m,k]); else if(k.anom) rev.push([2,m,k]); });
+    rev.sort(function(a,b){ return a[0]-b[0] || (Math.abs(b[2].c||0)-Math.abs(a[2].c||0)); });
+    room(60,null); title('À vérifier ('+rev.length+')');
+    var rc=[['N° COMPTEUR',mx+4],['CLIENT',mx+92],['ANCIEN',mx+200],['NOUVEAU',mx+242],['CONSO',mx+290],['MOTIF',mx+330]];
+    head(rc);
+    var COL={0:[254,226,226],1:[254,243,199],2:[254,226,226]}, LAB={0:'NÉGATIF',1:'ÉLEVÉE',2:'ANOMALIE'};
+    if(!rev.length){ doc.setFontSize(9.5); doc.setTextColor(22,120,60); doc.text('Aucune lecture à vérifier. ',mx+4,y); y+=14; }
+    rev.forEach(function(r,i){
+      var m=r[1],k=r[2]; room(26,rc);
+      var col=COL[r[0]]; doc.setFillColor(col[0],col[1],col[2]); doc.rect(mx,y-10,W-mx*2,r[0]===1?24:14,'F');
+      doc.setTextColor(30); doc.setFontSize(8); doc.setFont('helvetica','normal');
+      doc.text(String(m.meter||'—').slice(0,17),mx+4,y); doc.text(String(m.name||'—').slice(0,24),mx+92,y);
+      doc.text(String(m.prev===''||m.prev==null?'—':m.prev),mx+200,y); doc.text(String(m.current===''||m.current==null?'—':m.current),mx+242,y);
+      doc.setFont('helvetica','bold'); doc.text(k.hasC?String(k.c):'—',mx+290,y); doc.setFont('helvetica','normal');
+      var mot=LAB[r[0]]+(m.anomaly&&m.anomaly!=='RAS'?' · '+String(m.anomaly).replace(/_/g,' '):'');
+      doc.text(mot.slice(0,32),mx+330,y);
+      if(r[0]===1){ var w=SRPSmart.why(m,k.c); if(w){ doc.setFontSize(7); doc.setTextColor(110,70,0); doc.text(doc.splitTextToSize(w,W-mx*2-10)[0],mx+4,y+10); } y+=10; }
+      y+=14;
+    });
+    // pieds de page
+    var pc=doc.internal.getNumberOfPages();
+    for(var p=1;p<=pc;p++){ doc.setPage(p); doc.setFontSize(8); doc.setTextColor(140); doc.text('Page '+p+' / '+pc+' — Smart RV',mx,H-20); }
+    doc.save('Rapport_Analyse_'+now.toISOString().slice(0,10)+'.pdf');
+    toast('Rapport PDF généré.','success');
+  }
+  var oldPdf=window.exportDailyReportPdf;
+  window.exportDailyReportPdf=function(){
+    try{ return buildPdf(); }
+    catch(e){ console.error('PDF analyse :',e); toast('Rapport amélioré indisponible : ancien format utilisé.','warn'); if(typeof oldPdf==='function') return oldPdf.apply(this,arguments); }
+  };
+  window.SRPSmartUI={classify:classify,autoMapHistory:autoMapHistory};
 })();
 </script>
 </body>
