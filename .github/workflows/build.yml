@@ -73,6 +73,10 @@ jobs:
           #    par-dessus l'ancienne version sans désinstaller (sinon : « Conflit avec un package existant »)
           mkdir -p ~/.android
           cp debug.keystore ~/.android/debug.keystore
+          # 2b) Signature FORCÉE dans Gradle (copier le fichier dans ~/.android ne suffisait pas : l'APK sortait
+          #     signé avec une clé aléatoire différente à chaque build)
+          python3 native/add_signing.py
+          grep -n -A8 "signingConfigs" android/app/build.gradle
           # 3) Numéro de version TOUJOURS croissant (secondes depuis le 01/01/2026) : toujours supérieur à toute
           #    ancienne version, même construite par un autre dépôt ou un autre compteur (sinon Android refuse
           #    la mise à jour : « version plus récente déjà installée »). Reste très en dessous de la limite (2,1 milliards).

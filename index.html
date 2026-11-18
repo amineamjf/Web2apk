@@ -12142,7 +12142,7 @@ html body.v176-hide-prev.v176-hide-prev #entryPage .entry-previous-box{display:n
    Bouton « Vérifier les mises à jour » dans le menu de la tournée. */
 (function(){
   var busy=false;
-  var BUILD_CODE='V402-SMART-2026-11-18'; // change ce texte à chaque nouvelle version envoyée, pour vérifier visuellement qu'elle est bien chargée
+  var BUILD_CODE='V403-PLACE-EXPORT-2026-11-18'; // change ce texte à chaque nouvelle version envoyée, pour vérifier visuellement qu'elle est bien chargée
   function say(m,t){ try{ showToast(m,t||'info'); }catch(_){ } }
   window.v210CheckUpdate=function(){
     if(busy) return;
@@ -13587,6 +13587,10 @@ button,select,input{touch-action:manipulation}
     dot.addEventListener('click',async function(e){
       e.preventDefault(); e.stopPropagation();
       if(busy) return;
+      try{ var mm=Array.isArray(filteredMeters)?filteredMeters[currentIndex]:null;
+        if(mm&&/^\s*-?\d+(?:\.\d+)?\s*,\s*-?\d+(?:\.\d+)?\s*$/.test(String(mm.gps||''))&&!(Number(mm.gpsAccuracy)>50)){
+          try{ showToast('GPS déjà enregistré pour ce compteur : il n’est pas modifié. Pour le remplacer : ✏️ → Remplacer la position GPS.','info'); }catch(_){}
+          return; } }catch(_){}
       busy=true; dot.classList.add('v284-busy');
       try{ if(navigator.vibrate) navigator.vibrate(15); }catch(_){}
       try{ await getGPSLocation(false); }catch(_){}
@@ -15291,7 +15295,7 @@ html body #entryPage.v296 .v296-comp .v296-send{width:68px!important;height:68px
   function toast(t,k){try{showToast(t,k||'success');}catch(_){}}
 
   async function place(){
-    return; /* V329 : déplacement automatique désactivé — la place se confirme via « 📍 Confirmer la place » (menu ✏️). Code d'origine conservé ci-dessous. */
+    /* V403 : déplacement automatique RÉACTIVÉ (code d'origine V303) — « 📍 Confirmer la place » (menu ✏️) reste disponible, inchangé. */
     var p=pending; if(!p||placing) return; pending=null; placing=true;
     try{
       var m=p.meter, ref=p.anchor;
@@ -16799,6 +16803,143 @@ if(document.readyState==='complete') setTimeout(init,0); else window.addEventLis
     catch(e){ console.error('PDF analyse :',e); toast('Rapport amélioré indisponible : ancien format utilisé.','warn'); if(typeof oldPdf==='function') return oldPdf.apply(this,arguments); }
   };
   window.SRPSmartUI={classify:classify,autoMapHistory:autoMapHistory};
+})();
+</script>
+<script id="srp-export-v403">
+// V403 — Export Excel : (1) heure EXACTE avec secondes (vraie date/heure Excel, triable) ; (2) colonne « Ordre de lecture » ;
+//        (3) 2 feuilles seulement : « Analyse » (résumé, par tournée, à vérifier) + « Relevé ».
+(function(){
+  'use strict';
+  var NAVY='0A2A66', FMT_DT='dd/mm/yyyy hh:mm:ss';
+  function serial(d){ return (d.getTime()-d.getTimezoneOffset()*60000)/86400000+25569; }
+  function vdate(v){ if(!v) return null; var d=new Date(v); return isNaN(d.getTime())?null:d; }
+  function colOf(ws,title){
+    var rg=XLSX.utils.decode_range(ws['!ref']);
+    for(var c=rg.s.c;c<=rg.e.c;c++){ var x=ws[XLSX.utils.encode_cell({r:0,c:c})]; if(x&&String(x.v)===title) return c; }
+    return -1;
+  }
+  function stateOf(m){
+    var cur=(m.current!==''&&m.current!=null)?Number(m.current):NaN;
+    var prv=(m.prev===''||m.prev==null)?NaN:Number(m.prev);
+    var conso=(isFinite(cur)&&isFinite(prv))?cur-prv:null;
+    var et='NON RELEVÉ';
+    if(m.anomaly&&m.anomaly!=='RAS') et='ANOMALIE';
+    else if(conso!==null&&conso<0) et='CONSOMMATION NÉGATIVE';
+    else if(conso!==null&&((m.type==='EAU'&&SRPSmart.high(m,conso))||(m.type==='ELEC'&&conso>200))) et='CONSOMMATION ÉLEVÉE';
+    else if(conso!==null) et='NORMAL';
+    return {conso:conso,et:et,cur:isFinite(cur)?cur:null,prv:isFinite(prv)?prv:null};
+  }
+
+  /* ----- Relevé : heure exacte + ordre de lecture ----- */
+  function patchReleve(wb,list){
+    var ws=wb.Sheets['Relevé']; if(!ws||!ws['!ref']) return;
+    var cMeter=colOf(ws,'N° Compteur'), cT=colOf(ws,'Date/Heure Relevé'), i;
+    var rg=XLSX.utils.decode_range(ws['!ref']);
+    // rang de lecture : tri croissant sur l'heure exacte (égalité -> ordre du fichier)
+    var arr=[];
+    for(i=0;i<list.length;i++){ var d=vdate(list[i].readAt); if(d) arr.push({i:i,t:d.getTime()}); }
+    arr.sort(function(a,b){ return a.t-b.t || a.i-b.i; });
+    var rank={}; arr.forEach(function(x,k){ rank[x.i]=k+1; });
+    var cR=rg.e.c+1;
+    var hdr=ws[XLSX.utils.encode_cell({r:0,c:rg.e.c})];
+    ws[XLSX.utils.encode_cell({r:0,c:cR})]={t:'s',v:'Ordre de lecture',s:hdr&&hdr.s?hdr.s:undefined};
+    for(i=0;i<list.length;i++){
+      var r=i+1; if(r>rg.e.r) break;
+      var mc=cMeter>=0?ws[XLSX.utils.encode_cell({r:r,c:cMeter})]:null;
+      var aligned=!mc||String(mc.v)===String(list[i].meter||'');
+      var d2=vdate(list[i].readAt);
+      if(aligned&&cT>=0&&d2){
+        var old=ws[XLSX.utils.encode_cell({r:r,c:cT})];
+        ws[XLSX.utils.encode_cell({r:r,c:cT})]={t:'n',v:serial(d2),z:FMT_DT,s:old&&old.s?old.s:undefined};
+      }
+      var prevCell=ws[XLSX.utils.encode_cell({r:r,c:rg.e.c})];
+      var st=prevCell&&prevCell.s?JSON.parse(JSON.stringify(prevCell.s)):undefined;
+      if(st){ st.alignment=Object.assign({},st.alignment||{},{horizontal:'center'}); }
+      if(aligned&&rank[i]!==undefined) ws[XLSX.utils.encode_cell({r:r,c:cR})]={t:'n',v:rank[i],s:st};
+      else ws[XLSX.utils.encode_cell({r:r,c:cR})]={t:'s',v:'',s:st};
+    }
+    rg.e.c=cR; ws['!ref']=XLSX.utils.encode_range(rg);
+    if(ws['!autofilter']) ws['!autofilter']={ref:ws['!ref']};
+    if(Array.isArray(ws['!cols'])){
+      if(cT>=0&&ws['!cols'][cT]) ws['!cols'][cT]={wch:21};
+      while(ws['!cols'].length<cR) ws['!cols'].push({wch:14});
+      ws['!cols'][cR]={wch:15};
+    }
+  }
+
+  /* ----- Analyse ----- */
+  function buildAnalyse(list){
+    var ws={}, R=0, NC=10;
+    function put(r,c,v,s,z){
+      var a=XLSX.utils.encode_cell({r:r,c:c});
+      if(v===null||v===undefined||v===''){ if(s) ws[a]={t:'s',v:'',s:s}; return; }
+      var cell={t:(typeof v==='number')?'n':'s',v:v}; if(s) cell.s=s; if(z) cell.z=z; ws[a]=cell;
+    }
+    var TH={fill:{fgColor:{rgb:NAVY}},font:{bold:true,color:{rgb:'FFFFFF'},sz:10},alignment:{horizontal:'center',vertical:'center',wrapText:true}};
+    var H2={font:{bold:true,sz:12,color:{rgb:NAVY}}}, K={font:{sz:10}}, V={font:{bold:true,sz:10},alignment:{horizontal:'right'}};
+    var FILL={'CONSOMMATION NÉGATIVE':'FCA5A5','CONSOMMATION ÉLEVÉE':'FDE68A','ANOMALIE':'E9D5FF'};
+    var LAB={'CONSOMMATION NÉGATIVE':'NÉGATIF','CONSOMMATION ÉLEVÉE':'ÉLEVÉE','ANOMALIE':'ANOMALIE'};
+    var cfg=SRPSmart.get(), now=new Date();
+    var info=list.map(stateOf), n=list.length, i;
+    var lus=info.filter(function(x){return x.et!=='NON RELEVÉ';});
+    var cnt=function(e){ return info.filter(function(x){return x.et===e;}).length; };
+    var eau=[], elec=0;
+    list.forEach(function(m,k){ var c=info[k].conso; if(c!==null&&c>=0){ if(m.type==='ELEC') elec+=c; else eau.push(c); } });
+    eau.sort(function(a,b){return a-b;});
+    var eauSum=eau.reduce(function(a,b){return a+b;},0), med=eau.length?eau[Math.floor(eau.length/2)]:0;
+    var times=list.map(function(m){return vdate(m.readAt);}).filter(Boolean).sort(function(a,b){return a-b;});
+    put(R,0,'ANALYSE DU RELEVÉ',{font:{bold:true,sz:16,color:{rgb:NAVY}}}); R++;
+    put(R,0,'Exporté le '+now.toLocaleDateString('fr-FR')+' à '+now.toLocaleTimeString('fr-FR')+'  ·  Élevée = '+(cfg.fixed>0?'> '+cfg.fixed+' m³ ou ':'')+(cfg.smart?'≥ ×'+cfg.factor+' la conso habituelle du compteur (min. '+cfg.minM3+' m³)':'seuil fixe seul'),{font:{italic:true,sz:9,color:{rgb:'555555'}}}); R+=2;
+    put(R,0,'Résumé',H2); R++;
+    var summ=[['Total compteurs',n],['Eau',list.filter(function(m){return m.type!=='ELEC';}).length],['Électricité',list.filter(function(m){return m.type==='ELEC';}).length],
+      ['Relevés (lus)',lus.length],['Restants',n-lus.length],['Normaux',cnt('NORMAL')],['Consommation élevée',cnt('CONSOMMATION ÉLEVÉE')],
+      ['Consommation négative',cnt('CONSOMMATION NÉGATIVE')],['Anomalies',cnt('ANOMALIE')],
+      ['Index arrêtés (0) parmi les lus',info.filter(function(x){return x.conso===0;}).length],
+      ['Consommation eau des lus (m³)',Math.round(eauSum)],['Médiane eau (m³)',med],['Compteurs ajoutés manuellement',list.filter(function(m){return m.added===true;}).length],
+      ['Compteurs réordonnés',list.filter(function(m){return m.reordered===true;}).length]];
+    if(elec>0) summ.splice(11,0,['Consommation électricité des lus (kWh)',Math.round(elec)]);
+    summ.forEach(function(p){ put(R,0,p[0],K); put(R,1,p[1],V); R++; });
+    if(times.length){ put(R,0,'Premier relevé',K); put(R,1,serial(times[0]),V,FMT_DT); R++; put(R,0,'Dernier relevé',K); put(R,1,serial(times[times.length-1]),V,FMT_DT); R++; }
+    R++; put(R,0,'Par tournée',H2); R++;
+    ['Tournée','Compteurs','Relevés','% relevés','Conso eau (m³)','Élevées','Négatives'].forEach(function(t,c){ put(R,c,t,TH); }); R++;
+    var T={};
+    list.forEach(function(m,k){ var t=String(m.tour||(typeof tourName!=='undefined'?tourName:'')||'(sans tournée)'); var o=T[t]||(T[t]={n:0,l:0,s:0,h:0,g:0}); o.n++;
+      if(info[k].et!=='NON RELEVÉ') o.l++; if(info[k].conso!==null&&info[k].conso>0&&m.type!=='ELEC') o.s+=info[k].conso; if(info[k].et==='CONSOMMATION ÉLEVÉE') o.h++; if(info[k].et==='CONSOMMATION NÉGATIVE') o.g++; });
+    Object.keys(T).sort(function(a,b){return T[b].n-T[a].n;}).slice(0,60).forEach(function(t){
+      var o=T[t]; put(R,0,t,K); put(R,1,o.n,K); put(R,2,o.l,K); put(R,3,o.n?o.l/o.n:0,K,'0%'); put(R,4,Math.round(o.s),K); put(R,5,o.h,K); put(R,6,o.g,K); R++; });
+    R++; put(R,0,'À vérifier',H2); R++;
+    var hdrRow=R;
+    ['Motif','N°','N° Compteur','Client','Tournée','Index préc.','Index act.','Conso','Heure du relevé','Détail'].forEach(function(t,c){ put(R,c,t,TH); }); R++;
+    var ord={'CONSOMMATION NÉGATIVE':0,'CONSOMMATION ÉLEVÉE':1,'ANOMALIE':2}, rev=[];
+    list.forEach(function(m,k){ if(ord[info[k].et]!==undefined) rev.push(k); });
+    rev.sort(function(a,b){ var A=info[a],B=info[b]; return ord[A.et]-ord[B.et] || (A.et==='CONSOMMATION NÉGATIVE'?(A.conso-B.conso):((B.conso||0)-(A.conso||0))); });
+    rev.forEach(function(k){
+      var m=list[k], x=info[k], d=vdate(m.readAt), f={fill:{fgColor:{rgb:FILL[x.et]}},font:{bold:true,sz:10},alignment:{horizontal:'center'}};
+      var det=x.et==='CONSOMMATION ÉLEVÉE'?(m.type==='EAU'?SRPSmart.why(m,x.conso):'Au-dessus du seuil (200 kWh).'):(x.et==='CONSOMMATION NÉGATIVE'?'Nouvel index inférieur à l’ancien index.':String(m.anomaly||'').replace(/_/g,' '));
+      put(R,0,LAB[x.et],f); put(R,1,k+1,K); put(R,2,m.meter||'',K); put(R,3,m.name||'',K); put(R,4,m.tour||(typeof tourName!=='undefined'?tourName:'')||'',K);
+      put(R,5,x.prv,K); put(R,6,x.cur,K); put(R,7,x.conso,{font:{bold:true,sz:10}}); if(d) put(R,8,serial(d),K,FMT_DT); put(R,9,det,K); R++;
+    });
+    if(!rev.length){ put(R,0,'Rien à vérifier.',{font:{sz:10,color:{rgb:'166534'}}}); R++; }
+    ws['!ref']=XLSX.utils.encode_range({s:{r:0,c:0},e:{r:R-1,c:NC-1}});
+    ws['!cols']=[{wch:38},{wch:12},{wch:20},{wch:28},{wch:18},{wch:12},{wch:12},{wch:12},{wch:21},{wch:80}];
+    ws['!merges']=[{s:{r:0,c:0},e:{r:0,c:NC-1}},{s:{r:1,c:0},e:{r:1,c:NC-1}}];
+    if(rev.length) ws['!autofilter']={ref:XLSX.utils.encode_range({s:{r:hdrRow,c:0},e:{r:R-1,c:NC-1}})};
+    return ws;
+  }
+
+  var prevBuild=window.buildExportWorkbook;
+  window.buildExportWorkbook=function(){
+    var wb=prevBuild.apply(this,arguments);
+    try{
+      var list=(typeof v231ExportOrdered==='function')?v231ExportOrdered():allMetersData;
+      patchReleve(wb,list);
+      var an=buildAnalyse(list);
+      wb.Sheets['Analyse']=an; delete wb.Sheets['Synthèse'];
+      wb.SheetNames=['Analyse'].concat(wb.SheetNames.filter(function(n){return n!=='Analyse'&&n!=='Synthèse';}));
+    }catch(e){ console.error('V403 export :',e); }
+    return wb;
+  };
+  window.SRPExportV403={stateOf:stateOf,buildAnalyse:buildAnalyse,patchReleve:patchReleve};
 })();
 </script>
 </body>
