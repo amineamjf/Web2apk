@@ -1,0 +1,29 @@
+name: Export réel (aperçu)
+on:
+  workflow_dispatch:
+  push:
+    branches: [feat/smart-import]
+    paths: ['index.html','tests/real_export.js','.github/workflows/real-export.yml']
+permissions:
+  contents: write
+jobs:
+  real:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 20 }
+      - run: npm install --no-save playwright@1.49.0 && npx playwright install --with-deps chromium
+      - run: node tests/real_export.js
+      - name: Aperçu (LibreOffice)
+        run: |
+          sudo apt-get update -qq && sudo apt-get install -y -qq libreoffice-calc poppler-utils >/dev/null
+          soffice --headless --convert-to pdf real-export.xlsx >/dev/null 2>&1
+          pdftoppm -r 110 -png real-export.pdf rp
+          mkdir -p /tmp/pv2 && cp real-export.xlsx rp*.png /tmp/pv2/ && ls /tmp/pv2
+      - name: Publier (branche ci-preview-real)
+        run: |
+          cd /tmp/pv2 && git init -q && git checkout -q -b ci-preview-real
+          git config user.email ci@example.com && git config user.name ci
+          git add -A && git commit -q -m preview
+          git push -q -f "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git" ci-preview-real
