@@ -16858,7 +16858,7 @@ if(document.readyState==='complete') setTimeout(init,0); else window.addEventLis
   function levelOf(m,x,faibleMax){
     var an=m.anomaly&&m.anomaly!=='RAS'?m.anomaly:'';
     if(an&&an!=='INHABITE') return 'Anomalie';
-    if(an==='INHABITE'&&x.conso===null) return 'Inhabité';
+    if(an==='INHABITE') return 'Inhabité';
     if(x.conso===null) return 'Non relevé';
     var c=x.conso;
     if(c<0) return 'Négatif';
@@ -16905,7 +16905,8 @@ if(document.readyState==='complete') setTimeout(init,0); else window.addEventLis
         var title=''; for(var k in H){ if(H[k]===c){ title=k; break; } }
         if(orange&&title!=='État'&&title!=='Niveau'&&title!=='Consommation') continue;      // ligne orange (réordonné) conservée telle quelle
         var link=cell.l, st={fill:{fgColor:{rgb:zebra}},font:{sz:10,color:{rgb:'1F2937'}},alignment:{horizontal:LEFT[title]?'left':'center',vertical:'center',wrapText:!!LEFT[title]},border:bd()};
-        if(title==='Consommation'||title==='État'||title==='Niveau'){ st.fill={fgColor:{rgb:L[3]}}; st.font={sz:10,bold:true,color:{rgb:L[2]}}; }
+        if(title==='Consommation'||title==='Niveau'){ st.fill={fgColor:{rgb:L[3]}}; st.font={sz:10,bold:true,color:{rgb:L[2]}}; }
+        if(title==='État'){ var ET={'NORMAL':'Normale','CONSOMMATION ÉLEVÉE':'Élevée','CONSOMMATION NÉGATIVE':'Négatif','ANOMALIE':'Anomalie','NON RELEVÉ':'Non relevé'}, EL=LV[LVI[(m.anomaly==='INHABITE')?'Inhabité':(ET[String(cell.v)]||'Non relevé')]]; st.fill={fgColor:{rgb:EL[3]}}; st.font={sz:10,bold:true,color:{rgb:EL[2]}}; }
         if(title==='Consommation'&&cell.t==='n') cell.z='#,##0.##';
         if(title==='Ancien Index'||title==='Nouvel Index'){ if(cell.t==='n') cell.z='#,##0'; st.font={sz:10,bold:title==='Nouvel Index',color:{rgb:'1F2937'}}; }
         if(title==='N° Compteur'||title==='N° Client / Contrat') st.font={sz:10,bold:true,color:{rgb:NAVY}};
