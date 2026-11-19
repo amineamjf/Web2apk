@@ -12142,7 +12142,7 @@ html body.v176-hide-prev.v176-hide-prev #entryPage .entry-previous-box{display:n
    Bouton « Vérifier les mises à jour » dans le menu de la tournée. */
 (function(){
   var busy=false;
-  var BUILD_CODE='V408-GPS-GUARD-2026-11-19'; // change ce texte à chaque nouvelle version envoyée, pour vérifier visuellement qu'elle est bien chargée
+  var BUILD_CODE='V409-NOFREEZECOLS-2026-11-19'; // change ce texte à chaque nouvelle version envoyée, pour vérifier visuellement qu'elle est bien chargée
   function say(m,t){ try{ showToast(m,t||'info'); }catch(_){ } }
   window.v210CheckUpdate=function(){
     if(busy) return;
@@ -17095,11 +17095,11 @@ if(document.readyState==='complete') setTimeout(init,0); else window.addEventLis
     var rid=(m[0].match(/r:id="([^"]+)"/)||[])[1];
     var rm=rels.match(new RegExp('<Relationship [^>]*Id="'+rid+'"[^>]*>')); if(!rm) throw new Error('relation introuvable');
     var tg=(rm[0].match(/Target="([^"]+)"/)||[])[1].replace(/^\//,''); var sheetPath=tg.indexOf('xl/')===0?tg:'xl/'+tg;
-    try{   // feuille « Relevé » : première ligne et premières colonnes figées (échec sans conséquence)
+    try{   // feuille « Relevé » : SEULE la première ligne est figée (aucune colonne figée : défilement libre sur téléphone) (échec sans conséquence)
       var m2=wbx.match(/<sheet [^>]*name="Relevé"[^>]*>/), rid2=m2&&(m2[0].match(/r:id="([^"]+)"/)||[])[1], rm2=rid2&&rels.match(new RegExp('<Relationship [^>]*Id="'+rid2+'"[^>]*>'));
       if(rm2){ var tg2=(rm2[0].match(/Target="([^"]+)"/)||[])[1].replace(/^\//,''), p2=tg2.indexOf('xl/')===0?tg2:'xl/'+tg2, x2=await zip.file(p2).async('string');
         if(!/<pane /.test(x2)){
-          var pane='<pane xSplit="6" ySplit="1" topLeftCell="G2" activePane="bottomRight" state="frozen"/><selection pane="topRight"/><selection pane="bottomLeft"/><selection pane="bottomRight" activeCell="G2" sqref="G2"/>';
+          var pane='<pane ySplit="1" topLeftCell="A2" activePane="bottomLeft" state="frozen"/><selection pane="bottomLeft" activeCell="A2" sqref="A2"/>';
           var x3=x2.replace(/<sheetView([^>]*?)\/>/,'<sheetView$1>'+pane+'</sheetView>');
           if(x3===x2) x3=x2.replace(/(<sheetView[^>]*>)/,'$1'+pane);
           if(x3!==x2) zip.file(p2,x3); } }
