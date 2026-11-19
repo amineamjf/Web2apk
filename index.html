@@ -12142,7 +12142,7 @@ html body.v176-hide-prev.v176-hide-prev #entryPage .entry-previous-box{display:n
    Bouton « Vérifier les mises à jour » dans le menu de la tournée. */
 (function(){
   var busy=false;
-  var BUILD_CODE='V407-RELEVE-DESIGN-2026-11-19'; // change ce texte à chaque nouvelle version envoyée, pour vérifier visuellement qu'elle est bien chargée
+  var BUILD_CODE='V408-GPS-GUARD-2026-11-19'; // change ce texte à chaque nouvelle version envoyée, pour vérifier visuellement qu'elle est bien chargée
   function say(m,t){ try{ showToast(m,t||'info'); }catch(_){ } }
   window.v210CheckUpdate=function(){
     if(busy) return;
@@ -13607,8 +13607,9 @@ button,select,input{touch-action:manipulation}
       e.preventDefault(); e.stopPropagation();
       if(busy) return;
       try{ var mm=Array.isArray(filteredMeters)?filteredMeters[currentIndex]:null;
-        if(mm&&/^\s*-?\d+(?:\.\d+)?\s*,\s*-?\d+(?:\.\d+)?\s*$/.test(String(mm.gps||''))&&!(Number(mm.gpsAccuracy)>50)){
-          try{ showToast('GPS déjà enregistré pour ce compteur : il n’est pas modifié. Pour le remplacer : ✏️ → Remplacer la position GPS.','info'); }catch(_){}
+        var nums=mm?String(mm.gps||'').match(/-?\d+(?:[.,]\d+)?/g):null, la=nums&&nums.length>=2?parseFloat(nums[0].replace(',','.')):NaN, lo=nums&&nums.length>=2?parseFloat(nums[1].replace(',','.')):NaN;
+        if(isFinite(la)&&isFinite(lo)&&Math.abs(la)<=90&&Math.abs(lo)<=180&&!(la===0&&lo===0)&&!(Number(mm.gpsAccuracy)>50)){
+          try{ showToast('GPS déjà enregistré pour ce compteur : il n’est pas modifié. Pour le remplacer : menu ☰ → 📍 Actualiser le GPS de ce compteur.','info'); }catch(_){}
           return; } }catch(_){}
       busy=true; dot.classList.add('v284-busy');
       try{ if(navigator.vibrate) navigator.vibrate(15); }catch(_){}
