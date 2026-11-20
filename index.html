@@ -12142,7 +12142,7 @@ html body.v176-hide-prev.v176-hide-prev #entryPage .entry-previous-box{display:n
    Bouton « Vérifier les mises à jour » dans le menu de la tournée. */
 (function(){
   var busy=false;
-  var BUILD_CODE='V409-NOFREEZECOLS-2026-11-19'; // change ce texte à chaque nouvelle version envoyée, pour vérifier visuellement qu'elle est bien chargée
+  var BUILD_CODE='V410-NOCROSSTOUR-2026-11-20'; // change ce texte à chaque nouvelle version envoyée, pour vérifier visuellement qu'elle est bien chargée
   function say(m,t){ try{ showToast(m,t||'info'); }catch(_){ } }
   window.v210CheckUpdate=function(){
     if(busy) return;
@@ -15319,6 +15319,7 @@ html body #entryPage.v296 .v296-comp .v296-send{width:68px!important;height:68px
     var p=pending; if(!p||placing) return; pending=null; placing=true;
     try{
       var m=p.meter, ref=p.anchor;
+      if(m&&ref&&tourOf(m)!==tourOf(ref)) return;   /* V410 : garde-fou : jamais entre deux tournées */
       if(grouped()||!m||!ref||m===ref||allMetersData.indexOf(m)<0||allMetersData.indexOf(ref)<0||!window.v290Test) return;
       var order=allMetersData.slice().sort(sortByIdx), im=order.indexOf(m), ir=order.indexOf(ref);
       if(im===ir+1) return;                      // déjà à sa place
@@ -15355,7 +15356,9 @@ html body #entryPage.v296 .v296-comp .v296-send{width:68px!important;height:68px
         var li=filteredMeters.indexOf(last), ci=filteredMeters.indexOf(c), adjacent=li>=0&&Math.abs(ci-li)===1;
         if(!adjacent){
           var anchor=(pending&&pending.meter===last)?pending.anchor:last;
-          pending={meter:c,anchor:anchor,wasEmpty:!hasRead(c),hadGps:!!c.gps};
+          /* V410 : jamais de déplacement automatique d'une tournée vers une autre (recherche d'un compteur d'une autre tournée) */
+          if(tourOf(anchor)!==tourOf(c)) pending=null;
+          else pending={meter:c,anchor:anchor,wasEmpty:!hasRead(c),hadGps:!!c.gps};
         } else if(pending&&pending.meter!==c){ pending=null; }
       } else if(pending&&pending.meter!==c){ pending=null; }
       last=c;
@@ -16330,7 +16333,8 @@ html body.dark-mode #entryPage.v296.v331 #meterTopCard.v332-moved .entry-contrac
     if(!was){
       try{
         var st=window.v303Test&&window.v303Test.state();
-        if(st&&st.pending&&st.last===m.meter&&typeof window.confirmerLaPlace==='function') await window.confirmerLaPlace();
+        var an=st&&st.anchor?(allMetersData||[]).find(function(x){return x&&x.meter===st.anchor;}):null;
+        if(st&&st.pending&&st.last===m.meter&&an&&String(an.tour||'').trim()===String(m.tour||'').trim()&&typeof window.confirmerLaPlace==='function') await window.confirmerLaPlace();
       }catch(e){ console.error('v404 place',e); }
     }
   }
