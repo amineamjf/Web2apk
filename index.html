@@ -12142,7 +12142,7 @@ html body.v176-hide-prev.v176-hide-prev #entryPage .entry-previous-box{display:n
    Bouton « Vérifier les mises à jour » dans le menu de la tournée. */
 (function(){
   var busy=false;
-  var BUILD_CODE='V410-NOCROSSTOUR-2026-11-20'; // change ce texte à chaque nouvelle version envoyée, pour vérifier visuellement qu'elle est bien chargée
+  var BUILD_CODE='V411-CLOUDBADGE-2026-11-20'; // change ce texte à chaque nouvelle version envoyée, pour vérifier visuellement qu'elle est bien chargée
   function say(m,t){ try{ showToast(m,t||'info'); }catch(_){ } }
   window.v210CheckUpdate=function(){
     if(busy) return;
@@ -17162,6 +17162,48 @@ if(document.readyState==='complete') setTimeout(init,0); else window.addEventLis
     setTimeout(function(){ URL.revokeObjectURL(url); },60000);
   };
   window.SRPExportV403={stateOf:stateOf,buildDash:buildDash,patchReleve:patchReleve,inject:inject,levelOf:levelOf};
+})();
+</script>
+
+<script id="srp-cloud-badge">
+/* V411 — Pastille d'état de la synchronisation cloud (affichage seul : ne modifie ni la logique de sync ni les données). */
+(function(){
+  'use strict';
+  function ls(k){ try{ return localStorage.getItem(k); }catch(_){ return null; } }
+  function hm(t){ try{ return new Date(t).toLocaleTimeString('fr-FR',{hour:'2-digit',minute:'2-digit'}); }catch(_){ return ''; } }
+  function day(t){ try{ return new Date(t).toLocaleDateString('fr-FR',{day:'2-digit',month:'2-digit'}); }catch(_){ return ''; } }
+  var el=null;
+  function mk(){
+    if(el) return el;
+    el=document.createElement('button'); el.type='button'; el.id='srpCloudBadge';
+    el.style.cssText='position:fixed;bottom:calc(env(safe-area-inset-bottom,0px) + 6px);left:50%;transform:translateX(-50%);z-index:50;border:1px solid #cbd5e1;border-radius:999px;padding:2px 10px;font:700 11px/1.4 system-ui,sans-serif;background:rgba(255,255,255,.94);color:#0f172a;box-shadow:0 1px 4px rgba(0,0,0,.15);display:none;max-width:90vw;white-space:nowrap;overflow:hidden;text-overflow:ellipsis';
+    el.onclick=function(){ try{ if(window.openCloudSync) window.openCloudSync(); else alert('Synchronisation cloud indisponible dans cette version : installez le dernier APK.'); }catch(_){} };
+    document.body.appendChild(el); return el;
+  }
+  function visible(){ var p=document.getElementById('entryPage'); return !!p && !p.classList.contains('hidden') && p.offsetParent!==null; }
+  function state(){
+    var C=window.SRPCloud, T=C&&C._t;
+    if(!T) return {t:'☁️ Cloud : non disponible (ancienne version)',c:'#b45309',bg:'#fffbeb'};
+    var S=T.S||{}, last=Number(ls('smartrv_cloud_last')||0), min=Number(ls('smartrv_cloud_min')===null?60:ls('smartrv_cloud_min'));
+    if(S.busy) return {t:'⏳ Cloud : envoi en cours…',c:'#1d4ed8',bg:'#eff6ff'};
+    if(S.err) return {t:'⚠️ Cloud : échec — touchez',c:'#b91c1c',bg:'#fef2f2'};
+    if(!min) return {t:'☁️ Cloud : désactivé',c:'#64748b',bg:'#f1f5f9'};
+    var nt=T.net&&T.net(); if(nt&&!nt.allowed&&navigator.onLine!==false) return {t:'📶 Cloud : en attente du Wi-Fi'+(last?' · dernière synchro '+hm(last):''),c:'#b45309',bg:'#fffbeb'};
+    if(navigator.onLine===false) return {t:'📴 Hors ligne'+(last?' · dernière synchro '+hm(last):''),c:'#b45309',bg:'#fffbeb'};
+    if(!last) return {t:'☁️ Cloud : pas encore synchronisé',c:'#b45309',bg:'#fffbeb'};
+    var same=new Date(last).toDateString()===new Date().toDateString();
+    var age=(Date.now()-last)/60000, old=min>0&&age>Math.max(min*3,180);
+    var info=String(ls('smartrv_cloud_info')||'').split('\n')[0];
+    return {t:(old?'🟠':'✅')+' Cloud '+(same?hm(last):day(last)+' '+hm(last))+(info?' · '+info:''),c:old?'#b45309':'#166534',bg:old?'#fffbeb':'#f0fdf4'};
+  }
+  function tick(){
+    try{
+      var b=mk(); if(!visible()){ b.style.display='none'; return; }
+      var s=state(); b.textContent=s.t; b.style.color=s.c; b.style.background=s.bg; b.style.display='block';
+    }catch(_){}
+  }
+  function init(){ setInterval(tick,2000); setTimeout(tick,1500); }
+  if(document.readyState==='loading') document.addEventListener('DOMContentLoaded',init); else init();
 })();
 </script>
 </body>
