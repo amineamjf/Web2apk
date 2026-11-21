@@ -7455,7 +7455,7 @@
                     'Tournée': (m.tour || tourName || ''),
                     'Client': m.name || '',
                     'Adresse': m.address || '',
-                    'Ancien Index': v177V(m.prev ?? ''),
+                    'Ancien Index': (m.prev ?? ''),
                     'Nouvel Index': m.current ?? '',
                     'Consommation': v177V(conso),
                     'État': etat,
@@ -7748,7 +7748,7 @@
                 'Client': m.name || '',
                 'Adresse': m.address || '',
                 'GPS': m.gps || '',
-                'Ancien Index': v177V(m.prev ?? ''),
+                'Ancien Index': (m.prev ?? ''),
                 'Nouvel Index (saisi)': m.current ?? '',
                 'Index corrigé (après vérification)': '',
                 'Remarque': '',
@@ -12162,7 +12162,7 @@ html body.v176-hide-prev.v176-hide-prev #entryPage .entry-previous-box{display:n
    Bouton « Vérifier les mises à jour » dans le menu de la tournée. */
 (function(){
   var busy=false;
-  var BUILD_CODE='V416-EXPECTED1-2026-11-21'; // change ce texte à chaque nouvelle version envoyée, pour vérifier visuellement qu'elle est bien chargée
+  var BUILD_CODE='V417-ANCIEN-PORTRAIT-2026-11-21'; // change ce texte à chaque nouvelle version envoyée, pour vérifier visuellement qu'elle est bien chargée
   function say(m,t){ try{ showToast(m,t||'info'); }catch(_){ } }
   window.v210CheckUpdate=function(){
     if(busy) return;

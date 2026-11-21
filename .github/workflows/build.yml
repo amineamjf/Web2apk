@@ -57,6 +57,10 @@ jobs:
               <uses-feature android:name="android.hardware.camera" android:required="false" />
           """
           s = s.replace("<application", perms + "\n    <application", 1)
+          # Verrouillage PORTRAIT définitif (aucune rotation, même téléphone incliné)
+          import re
+          s = re.sub(r'\s+android:screenOrientation="[^"]*"', '', s)
+          s = s.replace("<activity", '<activity android:screenOrientation="portrait"', 1)
           open(p, "w", encoding="utf-8").write(s)
           PY
 
