@@ -5243,6 +5243,19 @@
                     fixH.innerHTML = '<svg class="ic" aria-hidden="true"><use href="#i-pencil"/></svg> Corriger';
                     fixH.onclick = correctNegativeReading;
                     actionButton.parentNode?.insertBefore(fixH, actionButton);
+                    // V412 : photo directement depuis cet écran (un seul écran : Corriger · Photo · Confirmer).
+                    const phH = document.createElement('button');
+                    phH.type = 'button';
+                    phH.setAttribute('data-skip-photo', '1');
+                    phH.className = 'alert-secondary';
+                    const hasPh = !!(filteredMeters?.[currentIndex]?.photo);
+                    phH.innerHTML = hasPh ? '📷 Photo ✓ (refaire)' : '📷 Photo';
+                    phH.onclick = function () {
+                        const ci = document.getElementById('cameraInput');
+                        if (ci) ci.addEventListener('change', function () { phH.innerHTML = '📷 Photo ✓ (refaire)'; }, { once: true });
+                        openMeterCamera();
+                    };
+                    actionButton.parentNode?.insertBefore(phH, actionButton);
                 }
             } else {
                 icon.innerHTML = '<svg class="ic" aria-hidden="true"><use href="#i-warning"/></svg>';
@@ -5266,6 +5279,7 @@
             const box = document.getElementById('centralAlert');
             if (!box) return;
             box.querySelector('[data-correct-reading]')?.remove();
+            box.querySelector('[data-skip-photo]')?.remove();
             box.classList.remove('show-alert');
             box.classList.add('hidden');
             box.style.setProperty('display', 'none', 'important');
@@ -12142,7 +12156,7 @@ html body.v176-hide-prev.v176-hide-prev #entryPage .entry-previous-box{display:n
    Bouton « Vérifier les mises à jour » dans le menu de la tournée. */
 (function(){
   var busy=false;
-  var BUILD_CODE='V411-CLOUDBADGE-2026-11-20'; // change ce texte à chaque nouvelle version envoyée, pour vérifier visuellement qu'elle est bien chargée
+  var BUILD_CODE='V412-HIGHPHOTO-2026-11-21'; // change ce texte à chaque nouvelle version envoyée, pour vérifier visuellement qu'elle est bien chargée
   function say(m,t){ try{ showToast(m,t||'info'); }catch(_){ } }
   window.v210CheckUpdate=function(){
     if(busy) return;
@@ -15748,6 +15762,10 @@ html body #entryPage.v296 .page-content{margin-top:-6px !important;}
   function key(m){return String(m&&m.meter||'')+'|'+String(m&&m.type||'');}
   function cur(){try{return filteredMeters[currentIndex]||null;}catch(_){return null;}}
   document.addEventListener('input',function(e){ var t=e.target; if(t&&t.id==='newIndexInput'){ var m=cur(); if(m) typedFor=key(m); } },true);
+  /* V412 : une fois « Confirmer la lecture » touché (avertissement d'origine), la MÊME valeur ne redemande plus de confirmation. */
+  (function(){ var oa=window.acknowledgeWarning; if(typeof oa!=='function'||oa._v412) return;
+    var w=function(m,kind){ try{ if(kind!=='anomaly'&&m){ var i=document.getElementById('newIndexInput'), r=i?String(i.value==null?'':i.value).trim().replace(',','.'):''; if(r!=='') acked[key(m)+'|'+r]=1; } }catch(_){} return oa.apply(this,arguments); };
+    w._v412=true; window.acknowledgeWarning=w; })();
   function install(){
     var o=window.validateBeforeMove; if(typeof o!=='function'||o._v317) return false;
     var w=function(){
