@@ -12152,7 +12152,7 @@ html body.v176-hide-prev.v176-hide-prev #entryPage .entry-previous-box{display:n
    Bouton « Vérifier les mises à jour » dans le menu de la tournée. */
 (function(){
   var busy=false;
-  var BUILD_CODE='V412-HIGHPHOTO-2026-11-21'; // change ce texte à chaque nouvelle version envoyée, pour vérifier visuellement qu'elle est bien chargée
+  var BUILD_CODE='V413-DIAGSEUIL-2026-11-21'; // change ce texte à chaque nouvelle version envoyée, pour vérifier visuellement qu'elle est bien chargée
   function say(m,t){ try{ showToast(m,t||'info'); }catch(_){ } }
   window.v210CheckUpdate=function(){
     if(busy) return;
@@ -16718,11 +16718,28 @@ if(document.readyState==='complete') setTimeout(init,0); else window.addEventLis
       +'<label style="font-size:13px;font-weight:700">…mais jamais en dessous de (m³)</label><input id="ssMin" type="number" step="1" min="0" value="'+s.minM3+'" style="'+inp+'">'
       +'<label style="font-size:13px;font-weight:700">Nombre de mois d’historique utilisés</label><input id="ssWin" type="number" step="1" min="2" max="11" value="'+s.win+'" style="'+inp+'">'
       +'<label style="font-size:13px;font-weight:700">Seuil fixe (m³) — vide ou 0 = désactivé</label><input id="ssFixed" type="number" step="1" min="0" value="'+(s.fixed>0?s.fixed:'')+'" style="'+inp+'">'
+      +'<div id="ssDiag" style="font-size:12px;line-height:1.5;background:#f1f5f9;color:#0f172a;border-radius:10px;padding:9px;margin-bottom:12px"></div>'
       +'<div style="font-size:12px;color:#64748b;margin-bottom:12px">Exemple : habituel 6, 3, 4 m³ (médiane 4). Avec ×2 et minimum 8 → alerte à partir de 8 m³. Sans historique (moins de 2 mois), seul le seuil fixe s’applique. Électricité : seuil inchangé.</div>'
       +'<div style="display:flex;gap:8px"><button id="ssSave" style="flex:1;background:#0a2a66;color:#fff;border:0;border-radius:10px;padding:11px;font-weight:800">Enregistrer</button>'
       +'<button id="ssReset" style="background:#e2e8f0;border:0;border-radius:10px;padding:11px;font-weight:700">Défauts</button>'
       +'<button id="ssClose" style="background:#e2e8f0;border:0;border-radius:10px;padding:11px;font-weight:700">Fermer</button></div></div>';
     document.body.appendChild(md);
+    /* V413 : diagnostic du compteur affiché — dit exactement pourquoi l'alerte intelligente s'applique ou non. */
+    try{
+      var dm=(typeof filteredMeters!=='undefined'&&filteredMeters)?filteredMeters[currentIndex]:null, dg=$('ssDiag'), cf=SRPSmart.get();
+      if(dg){
+        if(!dm) dg.textContent='Aucun compteur affiché.';
+        else{
+          var rv=SRPSmart.recent(dm), hs=dm.history||{}, hl=Object.keys(hs).filter(function(k){return !/\d{4}/.test(k);}).map(function(k){return k+' '+hs[k];}).join(' · ')||'aucun';
+          var t='<b>Compteur '+(dm.meter||'')+'</b><br>Ancien index : '+(dm.prev===''||dm.prev==null?'—':dm.prev)+'<br>Historique : '+hl+'<br>';
+          if(!cf.smart) t+='⚠️ Détection par historique <b>désactivée</b> : seul le seuil fixe'+(cf.fixed>0?' ('+cf.fixed+' m³)':' (aucun)')+' s’applique.';
+          else if(rv.length<cf.minHist) t+='⚠️ Pas assez d’historique ('+rv.length+' conso mensuelle'+(rv.length>1?'s':'')+' exploitable'+(rv.length>1?'s':'')+', il en faut '+cf.minHist+') : <b>aucune alerte intelligente</b> pour ce compteur, seul le seuil fixe'+(cf.fixed>0?' ('+cf.fixed+' m³)':' (aucun)')+' s’applique.';
+          else{ var sr=rv.slice().sort(function(a,b){return a-b;}),n=sr.length,md2=n%2?sr[(n-1)/2]:(sr[n/2-1]+sr[n/2])/2,th=Math.max(cf.minM3,cf.factor*md2);
+            t+='Conso mensuelles : '+rv.map(SRPSmart.fmt).join(', ')+' m³ (habituel ≈ '+SRPSmart.fmt(md2)+')<br>✅ Alerte dès <b>'+SRPSmart.fmt(th)+' m³</b>'+(cf.fixed>0?' (ou plus de '+cf.fixed+' m³)':'')+'.'; }
+          dg.innerHTML=t;
+        }
+      }
+    }catch(e){ var d2=$('ssDiag'); if(d2) d2.textContent='Diagnostic indisponible.'; }
     function close(){ md.remove(); }
     md.addEventListener('click',function(e){ if(e.target===md) close(); });
     $('ssClose').onclick=close;
