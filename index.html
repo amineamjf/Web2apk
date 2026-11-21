@@ -12162,7 +12162,7 @@ html body.v176-hide-prev.v176-hide-prev #entryPage .entry-previous-box{display:n
    Bouton « Vérifier les mises à jour » dans le menu de la tournée. */
 (function(){
   var busy=false;
-  var BUILD_CODE='V414-ARCHIVE2025-2026-11-21'; // change ce texte à chaque nouvelle version envoyée, pour vérifier visuellement qu'elle est bien chargée
+  var BUILD_CODE='V415-EXPECTED-2026-11-21'; // change ce texte à chaque nouvelle version envoyée, pour vérifier visuellement qu'elle est bien chargée
   function say(m,t){ try{ showToast(m,t||'info'); }catch(_){ } }
   window.v210CheckUpdate=function(){
     if(busy) return;
@@ -16724,6 +16724,7 @@ if(document.readyState==='complete') setTimeout(init,0); else window.addEventLis
       +'<div style="font-weight:800;font-size:18px;margin-bottom:4px">🧠 Alertes intelligentes</div>'
       +'<div style="font-size:13px;color:#475569;margin-bottom:14px">Le compteur est comparé à SON historique : si le relevé dépasse nettement sa consommation habituelle, l’app vous prévient — même sous le seuil fixe.</div>'
       +'<label style="display:flex;gap:10px;align-items:center;font-weight:700;margin-bottom:12px"><input id="ssSmart" type="checkbox" '+(s.smart?'checked':'')+' style="width:20px;height:20px"> Détection par historique</label>'
+      +'<label style="display:flex;gap:10px;align-items:center;font-weight:700;margin-bottom:12px"><input id="ssExpected" type="checkbox" '+((window.SRPExpected&&!SRPExpected.on())?'':'checked')+' style="width:20px;height:20px"> Afficher l’« index attendu » (saisie)</label>'
       +'<label style="font-size:13px;font-weight:700">Alerte si la conso est au moins … fois la conso habituelle</label><input id="ssFactor" type="number" step="0.1" min="1" value="'+s.factor+'" style="'+inp+'">'
       +'<label style="font-size:13px;font-weight:700">…mais jamais en dessous de (m³)</label><input id="ssMin" type="number" step="1" min="0" value="'+s.minM3+'" style="'+inp+'">'
       +'<label style="font-size:13px;font-weight:700">Nombre de mois d’historique utilisés</label><input id="ssWin" type="number" step="1" min="2" max="11" value="'+s.win+'" style="'+inp+'">'
@@ -16757,6 +16758,7 @@ if(document.readyState==='complete') setTimeout(init,0); else window.addEventLis
     $('ssSave').onclick=function(){
       var f=Number($('ssFactor').value), mn=Number($('ssMin').value), w=Math.round(Number($('ssWin').value)), fx=Number($('ssFixed').value);
       SRPSmart.set({smart:$('ssSmart').checked,factor:(isFinite(f)&&f>=1)?f:2,minM3:(isFinite(mn)&&mn>=0)?mn:8,win:(isFinite(w)&&w>=2&&w<=11)?w:4,fixed:(isFinite(fx)&&fx>0)?fx:0});
+      try{ if(window.SRPExpected&&$('ssExpected')) SRPExpected.setOn($('ssExpected').checked); }catch(_){}
       close(); refreshAll(); toast('Alertes intelligentes enregistrées.','success');
     };
   }
@@ -17267,6 +17269,47 @@ if(document.readyState==='complete') setTimeout(init,0); else window.addEventLis
     return r;
   };
   w._v412=true; window.capturePhoto=w;
+})();
+</script>
+
+<script id="srp-expected-v415">
+/* V415 — « Index attendu » : petit repère (lecture seule) basé sur l'ancien index + la consommation habituelle du compteur
+   (historique 2026, sinon archive 2025). Ne modifie ni la saisie, ni les données, ni la mise en page (puce flottante, sans clic). */
+(function(){
+  'use strict';
+  var KEY='smartrv_expected_on', chip=null;
+  function on(){ try{ return localStorage.getItem(KEY)!=='0'; }catch(_){ return true; } }
+  function median(a){ var s=a.slice().sort(function(x,y){return x-y;}),n=s.length; return n%2?s[(n-1)/2]:(s[n/2-1]+s[n/2])/2; }
+  function expected(m){
+    if(!m||m.type!=='EAU'||!window.SRPSmart) return null;
+    var p=Number(m.prev); if(m.prev===''||m.prev==null||!isFinite(p)) return null;
+    var v=window.SRPSmart.recent(m); if(!v||v.length<2) return null;
+    var base=median(v), lo=Math.min.apply(null,v), hi=Math.max.apply(null,v);
+    return {idx:Math.round(p+base),lo:Math.round(p+lo),hi:Math.round(p+hi),base:base,src:v.src||'',n:v.length};
+  }
+  function mk(){
+    if(chip) return chip;
+    chip=document.createElement('div'); chip.id='srpExpectedChip'; chip.setAttribute('aria-hidden','true');
+    chip.style.cssText='position:fixed;z-index:55;pointer-events:none;display:none;font:700 11px/1.3 system-ui,sans-serif;color:#475569;background:rgba(241,245,249,.95);border:1px solid #cbd5e1;border-radius:999px;padding:1px 9px;white-space:nowrap;transform:translateX(-50%)';
+    document.body.appendChild(chip); return chip;
+  }
+  function tick(){
+    try{
+      var c=mk(), page=document.getElementById('entryPage'), inp=document.getElementById('newIndexInput');
+      if(!on()||!page||page.classList.contains('hidden')||!inp||inp.offsetParent===null){ c.style.display='none'; return; }
+      var m=(typeof filteredMeters!=='undefined'&&filteredMeters)?filteredMeters[currentIndex]:null;
+      var typed=String(inp.value||'').trim()!=='';
+      var isRead=m&&m.current!==''&&m.current!=null;
+      var e=(m&&!typed&&!isRead)?expected(m):null;
+      if(!e){ c.style.display='none'; return; }
+      var r=inp.getBoundingClientRect(); if(!r.width||r.top<40){ c.style.display='none'; return; }
+      c.textContent='Attendu ≈ '+e.idx+'  ('+e.lo+'–'+e.hi+')'+(e.src==='archive'?' · 2025':'');
+      c.style.left=(r.left+r.width/2)+'px'; c.style.top=Math.max(0,r.top-20)+'px'; c.style.display='block';
+    }catch(_){ if(chip) chip.style.display='none'; }
+  }
+  window.SRPExpected={expected:expected,on:on,setOn:function(v){ try{ localStorage.setItem(KEY,v?'1':'0'); }catch(_){} tick(); }};
+  function init(){ setInterval(tick,400); setTimeout(tick,800); }
+  if(document.readyState==='loading') document.addEventListener('DOMContentLoaded',init); else init();
 })();
 </script>
 </body>
