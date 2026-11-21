@@ -12162,7 +12162,7 @@ html body.v176-hide-prev.v176-hide-prev #entryPage .entry-previous-box{display:n
    Bouton « Vérifier les mises à jour » dans le menu de la tournée. */
 (function(){
   var busy=false;
-  var BUILD_CODE='V415-EXPECTED-2026-11-21'; // change ce texte à chaque nouvelle version envoyée, pour vérifier visuellement qu'elle est bien chargée
+  var BUILD_CODE='V416-EXPECTED1-2026-11-21'; // change ce texte à chaque nouvelle version envoyée, pour vérifier visuellement qu'elle est bien chargée
   function say(m,t){ try{ showToast(m,t||'info'); }catch(_){ } }
   window.v210CheckUpdate=function(){
     if(busy) return;
@@ -17303,7 +17303,7 @@ if(document.readyState==='complete') setTimeout(init,0); else window.addEventLis
       var e=(m&&!typed&&!isRead)?expected(m):null;
       if(!e){ c.style.display='none'; return; }
       var r=inp.getBoundingClientRect(); if(!r.width||r.top<40){ c.style.display='none'; return; }
-      c.textContent='Attendu ≈ '+e.idx+'  ('+e.lo+'–'+e.hi+')'+(e.src==='archive'?' · 2025':'');
+      c.textContent='Index attendu : '+e.idx;
       c.style.left=(r.left+r.width/2)+'px'; c.style.top=Math.max(0,r.top-20)+'px'; c.style.display='block';
     }catch(_){ if(chip) chip.style.display='none'; }
   }
