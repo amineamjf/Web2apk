@@ -5250,11 +5250,7 @@
                     phH.className = 'alert-secondary';
                     const hasPh = !!(filteredMeters?.[currentIndex]?.photo);
                     phH.innerHTML = hasPh ? '📷 Photo ✓ (refaire)' : '📷 Photo';
-                    phH.onclick = function () {
-                        const ci = document.getElementById('cameraInput');
-                        if (ci) ci.addEventListener('change', function () { phH.innerHTML = '📷 Photo ✓ (refaire)'; }, { once: true });
-                        openMeterCamera();
-                    };
+                    phH.onclick = function () { window.__v412HighPhoto = true; openMeterCamera(); };
                     actionButton.parentNode?.insertBefore(phH, actionButton);
                 }
             } else {
@@ -17222,6 +17218,28 @@ if(document.readyState==='complete') setTimeout(init,0); else window.addEventLis
   }
   function init(){ setInterval(tick,2000); setTimeout(tick,1500); }
   if(document.readyState==='loading') document.addEventListener('DOMContentLoaded',init); else init();
+})();
+</script>
+
+<script id="v412-highphoto">
+/* V412 — Alerte « consommation élevée » : la photo prise depuis cette fenêtre VAUT confirmation.
+   Pas d'éditeur de photo, pas de seconde fenêtre : la photo est enregistrée puis on passe au compteur suivant. */
+(function(){
+  var o=window.capturePhoto; if(typeof o!=='function'||o._v412) return;
+  var w=async function(ev){
+    var hp=!!window.__v412HighPhoto; window.__v412HighPhoto=false;
+    var box=document.getElementById('centralAlert'), title=document.getElementById('alertTitle');
+    var inAlert=hp&&box&&getComputedStyle(box).display!=='none'&&title&&/lev/i.test(title.textContent||'');
+    var hasFile=!!(ev&&ev.target&&ev.target.files&&ev.target.files[0]);
+    if(inAlert&&hasFile) window.__v224SkipEditor=true;
+    var m=(typeof filteredMeters!=='undefined'&&filteredMeters)?filteredMeters[currentIndex]:null;
+    var r=await o.apply(this,arguments);
+    if(inAlert&&hasFile&&m&&m.photo){
+      try{ acknowledgeWarning(m,'high'); hideAlert(); await persistCurrentMeter(m); await nextMeter(); }catch(e){ console.error('v412',e); }
+    }
+    return r;
+  };
+  w._v412=true; window.capturePhoto=w;
 })();
 </script>
 </body>
