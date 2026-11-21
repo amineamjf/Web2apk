@@ -23,7 +23,7 @@ jobs:
       - name: Prepare web folder
         run: |
           mkdir -p www
-          for f in index.html android-bridge.js cloud-sync.js sw.js manifest.json icon-192.png icon-512.png sidikacem-map.json; do
+          for f in index.html android-bridge.js cloud-sync.js archive-conso.js sw.js manifest.json icon-192.png icon-512.png sidikacem-map.json; do
             [ -f "$f" ] && cp "$f" www/ || true
           done
           # Synchronisation cloud : chargée juste après le pont Android (le build échoue si la balise manque)

@@ -14,6 +14,7 @@
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
     <script src="./android-bridge.js"></script>
+    <script src="./archive-conso.js"></script>
     <script id="srp-smart">
     /* V401 — Alertes intelligentes : compare la consommation à l'HISTORIQUE du compteur (médiane des derniers mois),
        en plus d'un seuil fixe facultatif. Réglable dans le menu « 🧠 Alertes intelligentes ». */
@@ -30,7 +31,7 @@
       function median(a){ if(!a.length) return 0; var s=a.slice().sort(function(x,y){return x-y;}), n=s.length; return n%2?s[(n-1)/2]:(s[n/2-1]+s[n/2])/2; }
       function fmt(x){ return (Math.round(x*10)/10).toString().replace('.',','); }
       // Consommations mensuelles récentes (du plus ancien au plus récent), à partir de m.history (index par mois) et m.prev.
-      function recent(m){
+      function recentRaw(m){
         var h=m&&m.history; if(!h) return [];
         var prev=Number(m.prev), cur=monthOf(m), end=-1;
         function raw(k){ var v=h[MONTHS[mod(k)]]; return (typeof v==='number'&&isFinite(v))?v:null; }
@@ -41,19 +42,28 @@
         for(var i=0;i<S.win;i++){ var a=ix(end-i), b=ix(end-i-1); if(a===null||b===null) break; var c=a-b; if(c<0) break; vals.unshift(c); }
         return vals;
       }
+      /* V414 : repli — si le compteur a moins de minHist consommations 2026 exploitables, on utilise sa conso mensuelle de l'archive 2025 (window.SRP_ARCHIVE). */
+      function recent(m){
+        var v=recentRaw(m);
+        if(v.length<S.minHist){
+          try{ var A=window.SRP_ARCHIVE&&window.SRP_ARCHIVE.m&&window.SRP_ARCHIVE.m[String(m&&m.meter||'')];
+            if(Array.isArray(A)&&A.length>=S.minHist){ v=A.slice(-S.win); v.src='archive'; } }catch(_){}
+        }
+        return v;
+      }
       function ev(m,c){
         if(!m||m.type!=='EAU'||typeof c!=='number'||!isFinite(c)||c<=0) return null;
         if(S.fixed>0 && c>S.fixed) return {kind:'fixed'};
         if(!S.smart) return null;
         var v=recent(m); if(v.length<S.minHist) return null;
         var base=median(v), thr=Math.max(S.minM3,S.factor*base);
-        if(c>=thr) return {kind:'smart',base:base,vals:v,thr:thr};
+        if(c>=thr) return {kind:'smart',base:base,vals:v,thr:thr,src:v.src||''};
         return null;
       }
       function why(m,c){
         var r=ev(m,c); if(!r) return '';
         if(r.kind==='fixed') return 'Au-dessus du seuil fixe ('+fmt(S.fixed)+' m³).';
-        var t='Habituellement ~ '+fmt(r.base)+' m³/mois (derniers mois : '+r.vals.map(fmt).join(', ')+')';
+        var t='Habituellement ~ '+fmt(r.base)+' m³/mois ('+(r.src==='archive'?'archive 2025 : ':'derniers mois : ')+r.vals.map(fmt).join(', ')+')';
         if(r.base>0) t+=' — ce relevé = ×'+fmt(c/r.base);
         return t+'.';
       }
@@ -12152,7 +12162,7 @@ html body.v176-hide-prev.v176-hide-prev #entryPage .entry-previous-box{display:n
    Bouton « Vérifier les mises à jour » dans le menu de la tournée. */
 (function(){
   var busy=false;
-  var BUILD_CODE='V413-DIAGSEUIL-2026-11-21'; // change ce texte à chaque nouvelle version envoyée, pour vérifier visuellement qu'elle est bien chargée
+  var BUILD_CODE='V414-ARCHIVE2025-2026-11-21'; // change ce texte à chaque nouvelle version envoyée, pour vérifier visuellement qu'elle est bien chargée
   function say(m,t){ try{ showToast(m,t||'info'); }catch(_){ } }
   window.v210CheckUpdate=function(){
     if(busy) return;
@@ -16735,7 +16745,7 @@ if(document.readyState==='complete') setTimeout(init,0); else window.addEventLis
           if(!cf.smart) t+='⚠️ Détection par historique <b>désactivée</b> : seul le seuil fixe'+(cf.fixed>0?' ('+cf.fixed+' m³)':' (aucun)')+' s’applique.';
           else if(rv.length<cf.minHist) t+='⚠️ Pas assez d’historique ('+rv.length+' conso mensuelle'+(rv.length>1?'s':'')+' exploitable'+(rv.length>1?'s':'')+', il en faut '+cf.minHist+') : <b>aucune alerte intelligente</b> pour ce compteur, seul le seuil fixe'+(cf.fixed>0?' ('+cf.fixed+' m³)':' (aucun)')+' s’applique.';
           else{ var sr=rv.slice().sort(function(a,b){return a-b;}),n=sr.length,md2=n%2?sr[(n-1)/2]:(sr[n/2-1]+sr[n/2])/2,th=Math.max(cf.minM3,cf.factor*md2);
-            t+='Conso mensuelles : '+rv.map(SRPSmart.fmt).join(', ')+' m³ (habituel ≈ '+SRPSmart.fmt(md2)+')<br>✅ Alerte dès <b>'+SRPSmart.fmt(th)+' m³</b>'+(cf.fixed>0?' (ou plus de '+cf.fixed+' m³)':'')+'.'; }
+            t+='Conso mensuelles'+(rv.src==='archive'?' (base : archive 2025)':'')+' : '+rv.map(SRPSmart.fmt).join(', ')+' m³ (habituel ≈ '+SRPSmart.fmt(md2)+')<br>✅ Alerte dès <b>'+SRPSmart.fmt(th)+' m³</b>'+(cf.fixed>0?' (ou plus de '+cf.fixed+' m³)':'')+'.'; }
           dg.innerHTML=t;
         }
       }
