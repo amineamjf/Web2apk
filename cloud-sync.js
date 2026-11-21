@@ -19,7 +19,7 @@
   var K = {
     key: 'smartrv_cloud_key', min: 'smartrv_cloud_min', last: 'smartrv_cloud_last',
     check: 'smartrv_cloud_check', sig: 'smartrv_cloud_sig', seen: 'smartrv_cloud_seen',
-    info: 'smartrv_cloud_info', hold: 'smartrv_cloud_hold', restoreTry: 'smartrv_cloud_restore_try'
+    info: 'smartrv_cloud_info', wifi: 'smartrv_cloud_wifi', hold: 'smartrv_cloud_hold', restoreTry: 'smartrv_cloud_restore_try'
   };
   var S = { busy: false, err: '', failAt: 0, step: '', tx: '', inited: false, render: null };
 
@@ -31,6 +31,12 @@
   function toast(m, t) { try { window.showToast(m, t || 'info'); } catch (_) {} }
   function sleep(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
   function getKey() { return ls(K.key) || ''; }
+  /* V411 — Wi-Fi uniquement (par défaut) : aucun envoi automatique en données mobiles. */
+  function wifiOnly() { return ls(K.wifi) !== '0'; }
+  function netKind() {
+    try { var c = navigator.connection || navigator.mozConnection || navigator.webkitConnection; return (c && c.type) ? String(c.type) : 'unknown'; } catch (_) { return 'unknown'; }
+  }
+  function netAllowed() { if (!wifiOnly()) return true; var k = netKind(); return k === 'wifi' || k === 'ethernet'; }
   function getMin() { var v = ls(K.min); if (v === null) return 60; v = Number(v); return isFinite(v) ? v : 60; }
   function normKey(s) { return String(s || '').trim().toUpperCase().replace(/\s+/g, ''); }
   function genKey() {
@@ -124,6 +130,7 @@
     if (ls(K.hold) === '1' && !opts.explicit) return { skipped: 'hold' };
     if (typeof window.buildFullBackupObject !== 'function') return { error: 'Application pas prête' };
     if (navigator.onLine === false) { refresh(); return { skipped: 'offline' }; }
+    if (!opts.explicit && !netAllowed()) { refresh(); return { skipped: 'nowifi' }; }
     S.busy = true; S.err = ''; S.step = 'Préparation…'; refresh();
     try {
       var backup = await window.buildFullBackupObject();
@@ -241,6 +248,7 @@
       : '☁️ Pas encore synchronisé.';
     if (ls(K.hold) === '1') t += '\n⏸ Envoi en pause : restaurez la copie cloud, ou touchez « Synchroniser maintenant » pour la remplacer.';
     if (navigator.onLine === false) t += '\nHors ligne : envoi automatique dès le retour du réseau.';
+    else if (!netAllowed()) t += netKind() === 'unknown' ? '\n📶 Réseau non identifié : aucun envoi automatique (mode Wi-Fi uniquement).' : '\n📶 Données mobiles : en attente du Wi-Fi, rien n’est envoyé.';
     return t;
   }
   function updateInfoLine() {
@@ -274,6 +282,7 @@
       + '<div id="cvKey" style="padding:10px;border-radius:12px;background:#f1f5f9;font-family:monospace;font-weight:800;font-size:14px;letter-spacing:.5px;word-break:break-all"></div>'
       + '<div style="display:flex;gap:6px;margin-top:6px"><button id="cvCopy" type="button" style="flex:1;border:0;border-radius:10px;padding:9px;background:#e0e7ff;color:#1e3a8a;font-weight:800;font-size:12px">📋 Copier</button>'
       + '<button id="cvWa" type="button" style="flex:1;border:0;border-radius:10px;padding:9px;background:#dcfce7;color:#166534;font-weight:800;font-size:12px">💬 Envoyer par WhatsApp</button></div>'
+      + '<label style="display:flex;gap:10px;align-items:center;margin-top:12px;font-weight:800"><input id="cvWifi" type="checkbox" style="width:20px;height:20px"> 📶 Wi-Fi uniquement (jamais en données mobiles)</label>'
       + '<div style="font-weight:800;margin:12px 0 6px">Fréquence</div><div id="cvChoices" style="display:flex;flex-wrap:wrap;gap:6px"></div>'
       + '<div id="cvStatus" style="margin-top:12px;padding:10px;border-radius:12px;background:#f1f5f9;font-weight:700;line-height:1.4;white-space:pre-line"></div>'
       + '<div style="margin-top:10px;color:#475569;line-height:1.45">• L’envoi se fait aussi <b>dès le retour du réseau</b> et quand vous quittez l’application.<br>'
@@ -299,6 +308,7 @@
     S.render = function () {
       var box = $('cvChoices'), st = $('cvStatus'), now = $('cvNow'), kb = $('cvKey'), rs = $('cvRestore'); if (!box || !st) return;
       kb.textContent = getKey();
+      var cw = $('cvWifi'); if (cw) { cw.checked = wifiOnly(); cw.onchange = function () { lset(K.wifi, cw.checked ? '1' : '0'); if (netAllowed()) { ldel(K.check); tick(); } refresh(); }; }
       var cur = getMin(); box.innerHTML = '';
       [[0, 'Désactivée'], [15, '15 min'], [30, '30 min'], [60, '1 h']].forEach(function (c) {
         var b = document.createElement('button'); b.type = 'button'; b.textContent = c[1];
@@ -312,6 +322,7 @@
       now.textContent = S.busy ? '⏳ En cours…' : '☁️ Synchroniser maintenant';
     };
     $('cvNow').onclick = async function () {
+      if (!netAllowed() && !confirm('Vous n’êtes pas sur le Wi-Fi (mode Wi-Fi uniquement).\n\nEnvoyer quand même maintenant avec les données mobiles ?')) return;
       var r = await syncNow({ force: true, explicit: true });
       if (r && r.skipped === 'empty') toast('Aucun compteur à synchroniser.', 'warn');
       else if (r && r.skipped === 'offline') toast('Pas de réseau : envoi automatique dès son retour.', 'warn');
@@ -319,6 +330,7 @@
       else if (r && r.error) { try { window.showPersistentErrorModal('Synchronisation impossible', r.error); } catch (_) { alert(r.error); } }
     };
     $('cvRestore').onclick = async function () {
+      if (!netAllowed() && !confirm('Vous n’êtes pas sur le Wi-Fi (mode Wi-Fi uniquement).\n\nTélécharger quand même la copie cloud avec les données mobiles ?')) return;
       var r = await restoreFromCloud();
       if (r && r.error) { try { window.showPersistentErrorModal('Restauration impossible', r.error); } catch (_) { alert(r.error); } }
     };
@@ -374,6 +386,7 @@
       setInterval(tick, 60000);
       window.addEventListener('online', function () { setTimeout(function () { trySync('online'); }, 2000); });
       window.addEventListener('offline', refresh);
+      try { var nc = navigator.connection; if (nc && nc.addEventListener) nc.addEventListener('change', function () { refresh(); if (netAllowed()) setTimeout(function () { trySync('online'); }, 2000); }); } catch (_) {}
       document.addEventListener('visibilitychange', function () {
         if (document.visibilityState === 'hidden') { if (minutesSince(K.check) >= 3) trySync('hide'); }
         else setTimeout(tick, 1500);
@@ -387,7 +400,7 @@
   window.SRPCloud = {
     sync: function (o) { return syncNow(o || { force: true, explicit: true }); },
     restore: restoreFromCloud, open: openModal, getKey: getKey,
-    _t: { buildParts: buildParts, assemble: assemble, latestManifest: latestManifest, syncNow: syncNow, restoreFromCloud: restoreFromCloud, S: S, K: K, due: due }
+    _t: { net: function () { return { wifiOnly: wifiOnly(), kind: netKind(), allowed: netAllowed() }; }, buildParts: buildParts, assemble: assemble, latestManifest: latestManifest, syncNow: syncNow, restoreFromCloud: restoreFromCloud, S: S, K: K, due: due }
   };
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init); else init();
 })();

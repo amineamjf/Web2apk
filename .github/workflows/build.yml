@@ -23,7 +23,7 @@ jobs:
       - name: Prepare web folder
         run: |
           mkdir -p www
-          for f in index.html android-bridge.js cloud-sync.js sw.js manifest.json icon-192.png icon-512.png sidikacem-map.json; do
+          for f in index.html android-bridge.js cloud-sync.js archive-conso.js sw.js manifest.json icon-192.png icon-512.png sidikacem-map.json; do
             [ -f "$f" ] && cp "$f" www/ || true
           done
           # Synchronisation cloud : chargée juste après le pont Android (le build échoue si la balise manque)
@@ -73,10 +73,17 @@ jobs:
           #    par-dessus l'ancienne version sans désinstaller (sinon : « Conflit avec un package existant »)
           mkdir -p ~/.android
           cp debug.keystore ~/.android/debug.keystore
-          # 3) Numéro de version croissant à chaque build (exigé par Android pour une mise à jour)
-          sed -i "s/versionCode 1$/versionCode ${{ github.run_number }}/; s/versionName \"1.0\"/versionName \"1.${{ github.run_number }}\"/" android/app/build.gradle
+          # 2b) Signature FORCÉE dans Gradle (copier le fichier dans ~/.android ne suffisait pas : l'APK sortait
+          #     signé avec une clé aléatoire différente à chaque build)
+          python3 native/add_signing.py
+          grep -n -A8 "signingConfigs" android/app/build.gradle
+          # 3) Numéro de version TOUJOURS croissant (secondes depuis le 01/01/2026) : toujours supérieur à toute
+          #    ancienne version, même construite par un autre dépôt ou un autre compteur (sinon Android refuse
+          #    la mise à jour : « version plus récente déjà installée »). Reste très en dessous de la limite (2,1 milliards).
+          VC=$(( $(date +%s) - 1767225600 ))
+          sed -i "s/versionCode 1$/versionCode $VC/; s/versionName \"1.0\"/versionName \"1.${{ github.run_number }}\"/" android/app/build.gradle
           grep -n "versionCode\|versionName" android/app/build.gradle
-          grep -q "versionCode ${{ github.run_number }}" android/app/build.gradle
+          grep -q "versionCode $VC" android/app/build.gradle
 
       - name: Sync web files
         run: npx cap sync android
@@ -87,8 +94,28 @@ jobs:
           chmod +x gradlew
           ./gradlew assembleDebug
 
+      - name: Verify signing key and version
+        run: |
+          APK=android/app/build/outputs/apk/debug/app-debug.apk
+          BT=$(ls -d "${ANDROID_HOME:-/usr/local/lib/android/sdk}"/build-tools/* 2>/dev/null | sort -V | tail -1)
+          EXPECTED=$(keytool -list -keystore debug.keystore -storepass android -alias androiddebugkey | grep -i -o 'SHA-\?256)\?: *[0-9A-F:]*' | head -1 | sed 's/^[^:]*: *//' | tr -d ':' | tr 'A-F' 'a-f')
+          echo "Empreinte attendue (clé fixe) : $EXPECTED"
+          if [ -n "$BT" ] && [ -x "$BT/apksigner" ]; then
+            "$BT/apksigner" verify --print-certs "$APK" | tee signer.txt
+            ACTUAL=$(grep -i 'certificate SHA-256' signer.txt | head -1 | sed 's/.*: *//' | tr -d ': ' | tr 'A-F' 'a-f')
+            echo "Empreinte de l'APK            : $ACTUAL"
+            if [ -n "$EXPECTED" ] && [ "$ACTUAL" != "$EXPECTED" ]; then
+              echo "::error::L'APK n'est PAS signé avec la clé fixe : la mise à jour par-dessus l'ancienne version sera refusée."
+              exit 1
+            fi
+          else
+            echo "::warning::apksigner introuvable : signature non vérifiée"
+          fi
+          [ -x "$BT/aapt2" ] && "$BT/aapt2" dump badging "$APK" | head -1 || true
+          cp "$APK" "android/app/build/outputs/apk/debug/SmartRV-v1.${{ github.run_number }}.apk"
+
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
           name: SmartRV-apk
-          path: android/app/build/outputs/apk/debug/app-debug.apk
+          path: android/app/build/outputs/apk/debug/SmartRV-v1.${{ github.run_number }}.apk

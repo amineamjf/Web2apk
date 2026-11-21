@@ -14,6 +14,67 @@
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
     <script src="./android-bridge.js"></script>
+    <script src="./archive-conso.js"></script>
+    <script id="srp-smart">
+    /* V401 — Alertes intelligentes : compare la consommation à l'HISTORIQUE du compteur (médiane des derniers mois),
+       en plus d'un seuil fixe facultatif. Réglable dans le menu « 🧠 Alertes intelligentes ». */
+    (function(){
+      'use strict';
+      var KEY='SmartRV_SmartAlerts';
+      var DEF={smart:true,fixed:25,factor:2,minM3:8,win:4,minHist:2};
+      var MONTHS=['Janvier','Février','Mars','Avril','Mai','Juin','Juillet','Août','Septembre','Octobre','Novembre','Décembre'];
+      function load(){ var o=null; try{ o=JSON.parse(localStorage.getItem(KEY)||'null'); }catch(_){} var s={}; for(var k in DEF){ s[k]=(o&&typeof o[k]===typeof DEF[k])?o[k]:DEF[k]; } return s; }
+      var S=load();
+      function save(){ try{ localStorage.setItem(KEY,JSON.stringify(S)); }catch(_){} }
+      function mod(n){ return ((n%12)+12)%12; }
+      function monthOf(m){ var d=(m&&m.readAt)?new Date(m.readAt):new Date(); if(isNaN(d.getTime())) d=new Date(); return d.getMonth(); }
+      function median(a){ if(!a.length) return 0; var s=a.slice().sort(function(x,y){return x-y;}), n=s.length; return n%2?s[(n-1)/2]:(s[n/2-1]+s[n/2])/2; }
+      function fmt(x){ return (Math.round(x*10)/10).toString().replace('.',','); }
+      // Consommations mensuelles récentes (du plus ancien au plus récent), à partir de m.history (index par mois) et m.prev.
+      function recentRaw(m){
+        var h=m&&m.history; if(!h) return [];
+        var prev=Number(m.prev), cur=monthOf(m), end=-1;
+        function raw(k){ var v=h[MONTHS[mod(k)]]; return (typeof v==='number'&&isFinite(v))?v:null; }
+        if(isFinite(prev)) for(var d=1;d<=12;d++){ if(raw(cur-d)===prev){ end=mod(cur-d); break; } }
+        if(end<0) end=mod(cur-1);
+        function ix(k){ var v=raw(k); if(v===null && mod(k)===end && isFinite(prev)) return prev; return v; }
+        var vals=[];
+        for(var i=0;i<S.win;i++){ var a=ix(end-i), b=ix(end-i-1); if(a===null||b===null) break; var c=a-b; if(c<0) break; vals.unshift(c); }
+        return vals;
+      }
+      /* V414 : repli — si le compteur a moins de minHist consommations 2026 exploitables, on utilise sa conso mensuelle de l'archive 2025 (window.SRP_ARCHIVE). */
+      function recent(m){
+        var v=recentRaw(m);
+        if(v.length<S.minHist){
+          try{ var A=window.SRP_ARCHIVE&&window.SRP_ARCHIVE.m&&window.SRP_ARCHIVE.m[String(m&&m.meter||'')];
+            if(Array.isArray(A)&&A.length>=S.minHist){ v=A.slice(-S.win); v.src='archive'; } }catch(_){}
+        }
+        return v;
+      }
+      function ev(m,c){
+        if(!m||m.type!=='EAU'||typeof c!=='number'||!isFinite(c)||c<=0) return null;
+        if(S.fixed>0 && c>S.fixed) return {kind:'fixed'};
+        if(!S.smart) return null;
+        var v=recent(m); if(v.length<S.minHist) return null;
+        var base=median(v), thr=Math.max(S.minM3,S.factor*base);
+        if(c>=thr) return {kind:'smart',base:base,vals:v,thr:thr,src:v.src||''};
+        return null;
+      }
+      function why(m,c){
+        var r=ev(m,c); if(!r) return '';
+        if(r.kind==='fixed') return 'Au-dessus du seuil fixe ('+fmt(S.fixed)+' m³).';
+        var t='Habituellement ~ '+fmt(r.base)+' m³/mois ('+(r.src==='archive'?'archive 2025 : ':'derniers mois : ')+r.vals.map(fmt).join(', ')+')';
+        if(r.base>0) t+=' — ce relevé = ×'+fmt(c/r.base);
+        return t+'.';
+      }
+      window.SRPSmart={
+        high:function(m,c){ return !!ev(m,c); }, why:why, recent:recent, eval:ev,
+        get:function(){ return Object.assign({},S); },
+        set:function(o){ for(var k in DEF){ if(o&&o[k]!==undefined) S[k]=o[k]; } save(); },
+        reset:function(){ S=Object.assign({},DEF); save(); }, defaults:DEF, fmt:fmt, MONTHS:MONTHS
+      };
+    })();
+    </script>
     <script>
         if ('serviceWorker' in navigator) {
             window.addEventListener('load', function () {
@@ -3288,7 +3349,7 @@
             const has=Number.isFinite(prev)&&Number.isFinite(cur);
             const conso=has?(cur-prev):NaN;
             const neg=has&&cur<prev, stopped=has&&cur===prev;
-            const high=Number.isFinite(conso)&&((m.type==='EAU'&&conso>25)||(m.type==='ELEC'&&conso>200));
+            const high=Number.isFinite(conso)&&((m.type==='EAU'&&SRPSmart.high(m,conso))||(m.type==='ELEC'&&conso>200));
             const sel=document.getElementById('anomalySelect');
             const opt=sel?Array.from(sel.options).find(o=>o.value===an):null;
             const anLabel=opt?opt.textContent.trim():an.replace(/_/g,' ');
@@ -4979,7 +5040,7 @@
             const stoppedStatus = hasReadingStatus && Number.isFinite(prevStatus) && currStatus === prevStatus;
             const unitStatus = m.type === 'ELEC' ? 'kWh' : 'm³';
             const consoStatus = (hasReadingStatus && Number.isFinite(prevStatus)) ? (currStatus - prevStatus) : NaN;
-            const highStatus = Number.isFinite(consoStatus) && ((m.type === 'EAU' && consoStatus > 25) || (m.type === 'ELEC' && consoStatus > 200));
+            const highStatus = Number.isFinite(consoStatus) && ((m.type === 'EAU' && SRPSmart.high(m, consoStatus)) || (m.type === 'ELEC' && consoStatus > 200));
             const blockedStatus = stoppedStatus && String(m.anomaly || 'RAS').toUpperCase() === 'BLOQUE';
             if (meterTopCard) {
                 meterTopCard.classList.remove('status-normal','status-negative','status-high','status-stopped','status-blocked','bg-emerald-600','border-emerald-300','bg-amber-500','border-amber-300','bg-blue-700','border-blue-400');
@@ -5192,6 +5253,15 @@
                     fixH.innerHTML = '<svg class="ic" aria-hidden="true"><use href="#i-pencil"/></svg> Corriger';
                     fixH.onclick = correctNegativeReading;
                     actionButton.parentNode?.insertBefore(fixH, actionButton);
+                    // V412 : photo directement depuis cet écran (un seul écran : Corriger · Photo · Confirmer).
+                    const phH = document.createElement('button');
+                    phH.type = 'button';
+                    phH.setAttribute('data-skip-photo', '1');
+                    phH.className = 'alert-secondary';
+                    const hasPh = !!(filteredMeters?.[currentIndex]?.photo);
+                    phH.innerHTML = hasPh ? '📷 Photo ✓ (refaire)' : '📷 Photo';
+                    phH.onclick = function () { window.__v412HighPhoto = true; openMeterCamera(); };
+                    actionButton.parentNode?.insertBefore(phH, actionButton);
                 }
             } else {
                 icon.innerHTML = '<svg class="ic" aria-hidden="true"><use href="#i-warning"/></svg>';
@@ -5215,6 +5285,7 @@
             const box = document.getElementById('centralAlert');
             if (!box) return;
             box.querySelector('[data-correct-reading]')?.remove();
+            box.querySelector('[data-skip-photo]')?.remove();
             box.classList.remove('show-alert');
             box.classList.add('hidden');
             box.style.setProperty('display', 'none', 'important');
@@ -5385,9 +5456,9 @@
                     showAlert('negative', 'Consommation négative', `Nouvel index ${current} inférieur à l’ancien index ${previous}. Consommation = ${conso} ${unit}.`);
                     return false;
                 }
-                const high = (m.type === 'EAU' && conso > 25) || (m.type === 'ELEC' && conso > 200);
+                const high = (m.type === 'EAU' && SRPSmart.high(m, conso)) || (m.type === 'ELEC' && conso > 200);
                 if (high && !warningAcknowledged(m, 'high')) {
-                    showAlert('high', 'Consommation élevée', `Attention : consommation ${conso} ${unit}, au-dessus du seuil autorisé.`);
+                    showAlert('high', 'Consommation élevée', `Attention : consommation ${conso} ${unit}. ${m.type === 'EAU' ? SRPSmart.why(m, conso) : 'Au-dessus du seuil autorisé.'}`);
                     const btn = document.getElementById('alertPrimaryBtn');
                     if (btn) btn.onclick = async function(){ acknowledgeWarning(m, 'high'); hideAlert(); await persistCurrentMeter(m); await nextMeter(); };
                     return false;
@@ -5665,7 +5736,7 @@
             const prev = Number(m?.prev), curr = Number(m?.current);
             if (!Number.isFinite(prev) || !Number.isFinite(curr) || curr < prev) return false;
             const c = curr - prev;
-            return m?.type === 'EAU' ? c > 25 : c > 500;
+            return m?.type === 'EAU' ? SRPSmart.high(m, c) : c > 500;
         }
 
         function setControlFilter(filter) {
@@ -7368,7 +7439,7 @@
                 let etat = 'NON RELEVÉ';
                 if (m.anomaly && m.anomaly !== 'RAS') etat = 'ANOMALIE';
                 else if (conso !== '' && conso < 0) etat = 'CONSOMMATION NÉGATIVE';
-                else if (conso !== '' && ((m.type === 'EAU' && conso > 25) || (m.type === 'ELEC' && conso > 200))) etat = 'CONSOMMATION ÉLEVÉE';
+                else if (conso !== '' && ((m.type === 'EAU' && SRPSmart.high(m, conso)) || (m.type === 'ELEC' && conso > 200))) etat = 'CONSOMMATION ÉLEVÉE';
                 else if (conso !== '') etat = 'NORMAL';
 
                 const readAtDate = m.readAt ? new Date(m.readAt) : null;
@@ -7723,7 +7794,7 @@
             setBusy(true, 'Export Excel', 'Génération du fichier (' + allMetersData.length + ' compteur(s))…');
             await new Promise(r => setTimeout(r, 30));
             try {
-                XLSX.writeFile(buildExportWorkbook(),`Releve_Compteurs_${new Date().toISOString().slice(0,10)}.xlsx`);
+                { const __wb = buildExportWorkbook(), __fn = `Releve_Compteurs_${new Date().toISOString().slice(0,10)}.xlsx`; if (window.SRPWriteXlsx) await window.SRPWriteXlsx(__wb, __fn); else XLSX.writeFile(__wb, __fn); }
                 showToast('Export Excel terminé. Les photos sont disponibles dans l’export ZIP.');
             } catch (e) {
                 showToast('Échec de l’export (fichier peut-être trop volumineux pour cet appareil).', 'error');
@@ -8355,7 +8426,7 @@ else startMap();
             setBusy(true, 'Export ZIP', 'Création du fichier Excel et des photos…');
             try {
                 const zip = new JSZip();
-                zip.file('Releve.xlsx', XLSX.write(buildExportWorkbook(), {bookType:'xlsx', type:'array'}));
+                zip.file('Releve.xlsx', window.SRPXlsxBytes ? await window.SRPXlsxBytes(buildExportWorkbook()) : XLSX.write(buildExportWorkbook(), {bookType:'xlsx', type:'array'}));
                 const photosRoot = zip.folder('Photos');
                 let photoCount = 0;
                 for (let i = 0; i < allMetersData.length; i++) {
@@ -12091,7 +12162,7 @@ html body.v176-hide-prev.v176-hide-prev #entryPage .entry-previous-box{display:n
    Bouton « Vérifier les mises à jour » dans le menu de la tournée. */
 (function(){
   var busy=false;
-  var BUILD_CODE='V318-CLAVIER-2026-10-20'; // change ce texte à chaque nouvelle version envoyée, pour vérifier visuellement qu'elle est bien chargée
+  var BUILD_CODE='V416-EXPECTED1-2026-11-21'; // change ce texte à chaque nouvelle version envoyée, pour vérifier visuellement qu'elle est bien chargée
   function say(m,t){ try{ showToast(m,t||'info'); }catch(_){ } }
   window.v210CheckUpdate=function(){
     if(busy) return;
@@ -12342,6 +12413,7 @@ html body.v176-hide-prev.v176-hide-prev #entryPage .entry-previous-box{display:n
         '<button data-a="crop" aria-label="Rogner">✂</button>'+
         COLORS.map(function(c,i){ return '<button class="dot'+(i===0?' sel':'')+'" data-c="'+c+'" style="background:'+c+'" aria-label="Couleur du stylo"></button>'; }).join('')+
         '<button data-a="undo" aria-label="Annuler" disabled>↶</button>'+
+        '<button class="dl" data-a="dl" aria-label="Enregistrer la photo dans le téléphone" style="background:#0f766e">💾 Téléphone</button>'+
       '</div>'+
       '<div class="stage"><div class="wrap"><canvas class="cv"></canvas><canvas class="ov"></canvas></div>'+
         '<button class="apply" data-a="apply" hidden>✓ Rogner</button></div>'+
@@ -12489,6 +12561,23 @@ html body.v176-hide-prev.v176-hide-prev #entryPage .entry-previous-box{display:n
       try{ window.__photoMeter=m; (window.openMeterCamera||openMeterCamera)(); }
       catch(e){ toast('Caméra indisponible.'); }
     }
+    async function doDevice(){          // V403 : enregistrer la photo (avec bandeau d'identification) dans le téléphone
+      if(S.busy) return; S.busy=true;
+      try{
+        var edited=S.stack.length>0;
+        var blob=edited?await new Promise(function(res){ cv.toBlob(res,'image/jpeg',0.9); }):dataToBlob(S.m.photo);
+        if(!blob){ toast('Impossible de préparer la photo.'); return; }
+        try{ if(window.v295Stamp){ var sb=await window.v295Stamp(blob,S.m); if(sb) blob=sb; } }catch(_){}
+        var ext=(blob.type.split('/')[1]||'jpg').replace('jpeg','jpg');
+        var clean=function(v){ return String(v==null?'':v).replace(/[^a-zA-Z0-9_-]+/g,'_'); };
+        var name='Photo_'+clean(S.m.meter||'compteur')+(S.m.contract?'_'+clean(S.m.contract):'')+'.'+ext;
+        var url=URL.createObjectURL(blob), a=document.createElement('a');
+        a.href=url; a.download=name; document.body.appendChild(a); a.click(); a.remove();
+        setTimeout(function(){ URL.revokeObjectURL(url); },60000);
+        toast('Photo enregistrée dans le téléphone (Téléchargements › SmartRV).','success');
+      }catch(e){ console.error('v403 photo',e); toast('Enregistrement impossible.'); }
+      finally{ S.busy=false; }
+    }
     async function doShare(){
       if(S.busy) return; S.busy=true;
       try{
@@ -12528,6 +12617,7 @@ html body.v176-hide-prev.v176-hide-prev #entryPage .entry-previous-box{display:n
       else if(a==='apply') applyCrop();
       else if(a==='save') doSave();
       else if(a==='wa') doShare();
+      else if(a==='dl') doDevice();
       else if(a==='del') doDelete();
       else if(a==='rep') doReplace();
     });
@@ -12832,7 +12922,7 @@ html body #entryPage #cameraPhotoBadge{top:-6px!important;right:-6px!important}
     var t=document.getElementById('v340Thumb'); if(t) return t;
     var h=document.getElementById('customerContactActions'); if(!h||!h.parentNode) return null;
     t=document.createElement('div'); t.id='v340Thumb'; t.setAttribute('role','button'); t.setAttribute('aria-label','Agrandir la photo du compteur');
-    t.innerHTML='<img alt="Photo du compteur"><div><div class="t">Photo du compteur</div><div class="s">Appuyez pour agrandir, rogner, remplacer ou supprimer</div></div>';
+    t.innerHTML='<img alt="Photo du compteur"><div><div class="t">Photo du compteur</div><div class="s">Appuyez pour agrandir, enregistrer dans le téléphone, rogner, remplacer ou supprimer</div></div>';
     t.addEventListener('click',function(e){
       e.preventDefault(); e.stopPropagation();
       var m=cur(); if(m&&m.photo&&typeof window.v200OpenPhotoEditor==='function') window.v200OpenPhotoEditor(m);
@@ -13536,6 +13626,11 @@ button,select,input{touch-action:manipulation}
     dot.addEventListener('click',async function(e){
       e.preventDefault(); e.stopPropagation();
       if(busy) return;
+      try{ var mm=Array.isArray(filteredMeters)?filteredMeters[currentIndex]:null;
+        var nums=mm?String(mm.gps||'').match(/-?\d+(?:[.,]\d+)?/g):null, la=nums&&nums.length>=2?parseFloat(nums[0].replace(',','.')):NaN, lo=nums&&nums.length>=2?parseFloat(nums[1].replace(',','.')):NaN;
+        if(isFinite(la)&&isFinite(lo)&&Math.abs(la)<=90&&Math.abs(lo)<=180&&!(la===0&&lo===0)&&!(Number(mm.gpsAccuracy)>50)){
+          try{ showToast('GPS déjà enregistré pour ce compteur : il n’est pas modifié. Pour le remplacer : menu ☰ → 📍 Actualiser le GPS de ce compteur.','info'); }catch(_){}
+          return; } }catch(_){}
       busy=true; dot.classList.add('v284-busy');
       try{ if(navigator.vibrate) navigator.vibrate(15); }catch(_){}
       try{ await getGPSLocation(false); }catch(_){}
@@ -15240,10 +15335,11 @@ html body #entryPage.v296 .v296-comp .v296-send{width:68px!important;height:68px
   function toast(t,k){try{showToast(t,k||'success');}catch(_){}}
 
   async function place(){
-    return; /* V329 : déplacement automatique désactivé — la place se confirme via « 📍 Confirmer la place » (menu ✏️). Code d'origine conservé ci-dessous. */
+    /* V403 : déplacement automatique RÉACTIVÉ (code d'origine V303) — « 📍 Confirmer la place » (menu ✏️) reste disponible, inchangé. */
     var p=pending; if(!p||placing) return; pending=null; placing=true;
     try{
       var m=p.meter, ref=p.anchor;
+      if(m&&ref&&tourOf(m)!==tourOf(ref)) return;   /* V410 : garde-fou : jamais entre deux tournées */
       if(grouped()||!m||!ref||m===ref||allMetersData.indexOf(m)<0||allMetersData.indexOf(ref)<0||!window.v290Test) return;
       var order=allMetersData.slice().sort(sortByIdx), im=order.indexOf(m), ir=order.indexOf(ref);
       if(im===ir+1) return;                      // déjà à sa place
@@ -15280,7 +15376,9 @@ html body #entryPage.v296 .v296-comp .v296-send{width:68px!important;height:68px
         var li=filteredMeters.indexOf(last), ci=filteredMeters.indexOf(c), adjacent=li>=0&&Math.abs(ci-li)===1;
         if(!adjacent){
           var anchor=(pending&&pending.meter===last)?pending.anchor:last;
-          pending={meter:c,anchor:anchor,wasEmpty:!hasRead(c),hadGps:!!c.gps};
+          /* V410 : jamais de déplacement automatique d'une tournée vers une autre (recherche d'un compteur d'une autre tournée) */
+          if(tourOf(anchor)!==tourOf(c)) pending=null;
+          else pending={meter:c,anchor:anchor,wasEmpty:!hasRead(c),hadGps:!!c.gps};
         } else if(pending&&pending.meter!==c){ pending=null; }
       } else if(pending&&pending.meter!==c){ pending=null; }
       last=c;
@@ -15670,6 +15768,10 @@ html body #entryPage.v296 .page-content{margin-top:-6px !important;}
   function key(m){return String(m&&m.meter||'')+'|'+String(m&&m.type||'');}
   function cur(){try{return filteredMeters[currentIndex]||null;}catch(_){return null;}}
   document.addEventListener('input',function(e){ var t=e.target; if(t&&t.id==='newIndexInput'){ var m=cur(); if(m) typedFor=key(m); } },true);
+  /* V412 : une fois « Confirmer la lecture » touché (avertissement d'origine), la MÊME valeur ne redemande plus de confirmation. */
+  (function(){ var oa=window.acknowledgeWarning; if(typeof oa!=='function'||oa._v412) return;
+    var w=function(m,kind){ try{ if(kind!=='anomaly'&&m){ var i=document.getElementById('newIndexInput'), r=i?String(i.value==null?'':i.value).trim().replace(',','.'):''; if(r!=='') acked[key(m)+'|'+r]=1; } }catch(_){} return oa.apply(this,arguments); };
+    w._v412=true; window.acknowledgeWarning=w; })();
   function install(){
     var o=window.validateBeforeMove; if(typeof o!=='function'||o._v317) return false;
     var w=function(){
@@ -15684,10 +15786,10 @@ html body #entryPage.v296 .page-content{margin-top:-6px !important;}
         var an=String((sel&&sel.value)||m.anomaly||'RAS'); if(an==='INHABITE'||an==='BLOQUE') return r;
         var k=key(m)+'|'+raw; if(acked[k]) return r;
         var unit=m.type==='ELEC'?'kWh':'m³', conso=c-p, kind=null;
-        if(c<p) kind='negative'; else if((m.type==='EAU'&&conso>25)||(m.type==='ELEC'&&conso>200)) kind='high';
+        if(c<p) kind='negative'; else if((m.type==='EAU'&&SRPSmart.high(m,conso))||(m.type==='ELEC'&&conso>200)) kind='high';
         if(!kind) return r;
         if(kind==='negative') showAlert('negative','Consommation négative','Nouvel index '+c+' inférieur à l’ancien index '+p+'. Consommation = '+conso+' '+unit+'.');
-        else showAlert('high','Consommation élevée','Attention : consommation '+conso+' '+unit+', au-dessus du seuil autorisé.');
+        else showAlert('high','Consommation élevée','Attention : consommation '+conso+' '+unit+'. '+(m.type==='EAU'?SRPSmart.why(m,conso):'Au-dessus du seuil autorisé.'));
         var btn=document.getElementById('alertPrimaryBtn');
         if(btn){
           var f=btn.onclick;
@@ -16251,6 +16353,14 @@ html body.dark-mode #entryPage.v296.v331 #meterTopCard.v332-moved .entry-contrac
       sync(); toast('Surlignage non enregistré : réessayez.','error'); return;
     }
     toast(was?('Surlignage orange retiré — compteur '+(m.meter||'')+(m.v290Prev?' (reste orange : Remplacement actif)':'')):('Compteur '+(m.meter||'')+' surligné en orange'),'info');
+    /* V404 : en surlignant un compteur « appelé » hors séquence, il prend aussitôt sa place après le dernier compteur lu (même règle que « 📍 Confirmer la place », qui reste disponible) */
+    if(!was){
+      try{
+        var st=window.v303Test&&window.v303Test.state();
+        var an=st&&st.anchor?(allMetersData||[]).find(function(x){return x&&x.meter===st.anchor;}):null;
+        if(st&&st.pending&&st.last===m.meter&&an&&String(an.tour||'').trim()===String(m.tour||'').trim()&&typeof window.confirmerLaPlace==='function') await window.confirmerLaPlace();
+      }catch(e){ console.error('v404 place',e); }
+    }
   }
   function start(e){
     cancel();
@@ -16485,6 +16595,721 @@ function init(){
 window.openAutoFileSettings=openSettings;
 window.SRPAutoFile={save:doSave,getMin:getMin,setMin:setMin};
 if(document.readyState==='complete') setTimeout(init,0); else window.addEventListener('load',function(){ setTimeout(init,0); });
+})();
+</script>
+<script>
+// V400 — Import Excel intelligent :
+//  (1) détecte tout seul la bonne feuille ET la ligne d'en-têtes (même sous un titre / une légende) ;
+//  (2) « Nouvelle période » : le dernier index connu (Nouvel index, sinon le plus récent « Index MM/AAAA »)
+//      devient l'Ancien index, et les lectures repartent à zéro.
+(function(){
+  'use strict';
+  function norm(s){ return String(s==null?'':s).toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g,'').trim(); }
+  // Une cellule d'en-tête compte pour UNE seule catégorie (la 1re qui correspond).
+  var CATS=[
+    ['meter',/compteur|appareil|\bmeter\b/,2],
+    ['prev',/ancien|precedent|\bprev\b|\bold\b/,2],
+    ['cur',/nouvel|nouveau|new\s*index/,2],
+    ['contract',/contrat/,1],
+    ['tour',/tournee|secteur/,1],
+    ['conso',/consommation|\bconso\b/,1],
+    ['anom',/anomalie/,1],
+    ['addr',/adresse|address/,1],
+    ['name',/\bnom\b|client/,1],
+    ['index',/\bindex\b/,1]
+  ];
+  function scoreRow(cells){
+    var seen={},score=0;
+    for(var i=0;i<cells.length;i++){
+      var t=norm(cells[i]); if(!t||t.length>40) continue;
+      for(var j=0;j<CATS.length;j++){
+        if(CATS[j][1].test(t)){ if(!seen[CATS[j][0]]){ seen[CATS[j][0]]=1; score+=CATS[j][2]; } break; }
+      }
+    }
+    return score;
+  }
+  function bestHeader(ws){
+    if(!ws||!ws['!ref']) return null;
+    var rg=XLSX.utils.decode_range(ws['!ref']), best=null;
+    var last=Math.min(rg.e.r, rg.s.r+14);
+    for(var r=rg.s.r;r<=last;r++){
+      var cells=[];
+      for(var c=rg.s.c;c<=rg.e.c;c++){ var cell=ws[XLSX.utils.encode_cell({r:r,c:c})]; cells.push(cell?cell.v:''); }
+      var sc=scoreRow(cells);
+      if(!best||sc>best.score) best={row:r,score:sc};
+    }
+    if(best) best.rows=rg.e.r-best.row;
+    return best;
+  }
+  var oldPick=(typeof v165PickImportSheet==='function')?v165PickImportSheet:null;
+  function pickSheet(workbook){
+    var names=workbook.SheetNames||[], best=null;
+    names.forEach(function(n){
+      var ws=workbook.Sheets[n], h=bestHeader(ws); if(!h) return;
+      var s=h.score+(/^rel[eé]v|rapport/i.test(String(n).trim())?1:0);
+      if(!best||s>best.s||(s===best.s&&h.rows>best.h.rows)) best={n:n,ws:ws,h:h,s:s};
+    });
+    if(!best||best.h.score<5) return oldPick?oldPick(workbook):workbook.Sheets[names[0]];
+    var ws=best.ws, rg=XLSX.utils.decode_range(ws['!ref']), out=ws;
+    if(best.h.row>rg.s.r){
+      out=Object.assign({},ws);
+      out['!ref']=XLSX.utils.encode_range({s:{r:best.h.row,c:rg.s.c},e:rg.e});
+    }
+    setTimeout(function(){ try{ showToast('Feuille détectée : « '+best.n+' » · en-têtes ligne '+(best.h.row+1),'success'); }catch(_){} },2200);
+    return out;
+  }
+  window.v165PickImportSheet=pickSheet;
+
+  function num(v){ var s=String(v==null?'':v).trim().replace(/\s/g,'').replace(',','.'); if(s==='') return null; var n=Number(s); return isFinite(n)?n:null; }
+  function datedCols(keys){
+    return keys.map(function(k){ var m=String(k).match(/^\s*index\s+(\d{1,2})\s*\/\s*(\d{4})\s*$/i); return m?{k:k,p:(+m[2])*12+(+m[1])}:null; })
+      .filter(Boolean).sort(function(a,b){return b.p-a.p;});
+  }
+  // Dernier index connu d'une ligne : Nouvel index > « Index MM/AAAA » le plus récent > Ancien index.
+  function latestKnown(row,curK,pK,dated){
+    var n=curK?num(row[curK]):null; if(n!==null) return n;
+    for(var i=0;i<dated.length;i++){ n=num(row[dated[i].k]); if(n!==null) return n; }
+    return pK?num(row[pK]):null;
+  }
+  var prevApply=window.applyMapping;
+  window.applyMapping=async function(){
+    try{
+      var curK=(document.getElementById('mapCurrent')||{}).value||'', pK=(document.getElementById('mapPrev')||{}).value||'', anoK=(document.getElementById('mapAnomaly')||{}).value||'';
+      if(pK && Array.isArray(rawJsonData) && rawJsonData.length){
+        var dated=datedCols(Object.keys(rawJsonData[0])), reads=0, newer=0;
+        if(dated.length) dated=dated.filter(function(d){ return d.p>=dated[0].p-2; }); // seulement les 3 derniers mois : jamais un vieil index (ex. 08/2025)
+        rawJsonData.forEach(function(row){
+          if(curK && num(row[curK])!==null) reads++;
+          var l=latestKnown(row,curK,pK,dated), p=num(row[pK]);
+          if(l!==null && l!==p) newer++;
+        });
+        if(reads>0||newer>0){
+          var ok=confirm('Ce fichier contient '+reads+' lecture(s) (« Nouvel index »)'+(dated.length?' et des index datés jusqu’à '+String(dated[0].k).trim():'')+'.\n\n'
+            +'OK = NOUVELLE PÉRIODE (ex. relevé de novembre) : le dernier index connu devient l’ANCIEN index ('+newer+' compteur(s) changent) et toutes les lectures repartent à zéro.\n\n'
+            +'Annuler = importer le fichier tel quel (continuer la tournée en cours avec ses lectures).');
+          if(ok){
+            rawJsonData.forEach(function(row){
+              var l=latestKnown(row,curK,pK,dated);
+              if(l!==null) row[pK]=l;
+              if(curK) row[curK]='';
+              if(anoK) row[anoK]='';
+            });
+            try{ showToast('Nouvelle période : ancien index = dernier index connu.','success'); }catch(_){}
+          }
+        }
+      }
+    }catch(e){ console.warn('V400 nouvelle période :',e); }
+    return prevApply.apply(this,arguments);
+  };
+  window.SRPImportV400={pickSheet:pickSheet,latestKnown:latestKnown,datedCols:datedCols,bestHeader:bestHeader};
+})();
+</script>
+<script id="srp-smart-ui">
+// V401 — (1) réglages « Alertes intelligentes » ; (2) import : colonnes « Index MM/AAAA » reliées automatiquement à l'historique ;
+//        (3) rapport PDF d'analyse (résumé, par tournée, liste à vérifier avec le motif intelligent).
+(function(){
+  'use strict';
+  function $(id){ return document.getElementById(id); }
+  function toast(m,t){ try{ showToast(m,t||'info'); }catch(_){} }
+  function esc(s){ return String(s==null?'':s).replace(/[&<>"]/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c];}); }
+  function refreshAll(){ try{ if(typeof updateCounts==='function') updateCounts(); }catch(_){} try{ if(typeof renderControlPage==='function') renderControlPage(); }catch(_){} try{ if(typeof renderCurrentMeter==='function') renderCurrentMeter(); }catch(_){} }
+
+  /* ---------- (1) réglages ---------- */
+  function openSettings(){
+    var old=$('srpSmartModal'); if(old) old.remove();
+    var s=SRPSmart.get(), md=document.createElement('div'); md.id='srpSmartModal';
+    md.style.cssText='position:fixed;inset:0;z-index:100000;background:rgba(15,23,42,.55);display:flex;align-items:center;justify-content:center;padding:16px';
+    var inp='width:100%;border:1px solid #cbd5e1;border-radius:10px;padding:9px;font-size:16px;margin:4px 0 12px;background:#fff;color:#0f172a';
+    md.innerHTML='<div style="background:#fff;color:#0f172a;border-radius:16px;max-width:430px;width:100%;max-height:92vh;overflow:auto;padding:18px;font-family:inherit">'
+      +'<div style="font-weight:800;font-size:18px;margin-bottom:4px">🧠 Alertes intelligentes</div>'
+      +'<div style="font-size:13px;color:#475569;margin-bottom:14px">Le compteur est comparé à SON historique : si le relevé dépasse nettement sa consommation habituelle, l’app vous prévient — même sous le seuil fixe.</div>'
+      +'<label style="display:flex;gap:10px;align-items:center;font-weight:700;margin-bottom:12px"><input id="ssSmart" type="checkbox" '+(s.smart?'checked':'')+' style="width:20px;height:20px"> Détection par historique</label>'
+      +'<label style="display:flex;gap:10px;align-items:center;font-weight:700;margin-bottom:12px"><input id="ssExpected" type="checkbox" '+((window.SRPExpected&&!SRPExpected.on())?'':'checked')+' style="width:20px;height:20px"> Afficher l’« index attendu » (saisie)</label>'
+      +'<label style="font-size:13px;font-weight:700">Alerte si la conso est au moins … fois la conso habituelle</label><input id="ssFactor" type="number" step="0.1" min="1" value="'+s.factor+'" style="'+inp+'">'
+      +'<label style="font-size:13px;font-weight:700">…mais jamais en dessous de (m³)</label><input id="ssMin" type="number" step="1" min="0" value="'+s.minM3+'" style="'+inp+'">'
+      +'<label style="font-size:13px;font-weight:700">Nombre de mois d’historique utilisés</label><input id="ssWin" type="number" step="1" min="2" max="11" value="'+s.win+'" style="'+inp+'">'
+      +'<label style="font-size:13px;font-weight:700">Seuil fixe (m³) — vide ou 0 = désactivé</label><input id="ssFixed" type="number" step="1" min="0" value="'+(s.fixed>0?s.fixed:'')+'" style="'+inp+'">'
+      +'<div id="ssDiag" style="font-size:12px;line-height:1.5;background:#f1f5f9;color:#0f172a;border-radius:10px;padding:9px;margin-bottom:12px"></div>'
+      +'<div style="font-size:12px;color:#64748b;margin-bottom:12px">Exemple : habituel 6, 3, 4 m³ (médiane 4). Avec ×2 et minimum 8 → alerte à partir de 8 m³. Sans historique (moins de 2 mois), seul le seuil fixe s’applique. Électricité : seuil inchangé.</div>'
+      +'<div style="display:flex;gap:8px"><button id="ssSave" style="flex:1;background:#0a2a66;color:#fff;border:0;border-radius:10px;padding:11px;font-weight:800">Enregistrer</button>'
+      +'<button id="ssReset" style="background:#e2e8f0;border:0;border-radius:10px;padding:11px;font-weight:700">Défauts</button>'
+      +'<button id="ssClose" style="background:#e2e8f0;border:0;border-radius:10px;padding:11px;font-weight:700">Fermer</button></div></div>';
+    document.body.appendChild(md);
+    /* V413 : diagnostic du compteur affiché — dit exactement pourquoi l'alerte intelligente s'applique ou non. */
+    try{
+      var dm=(typeof filteredMeters!=='undefined'&&filteredMeters)?filteredMeters[currentIndex]:null, dg=$('ssDiag'), cf=SRPSmart.get();
+      if(dg){
+        if(!dm) dg.textContent='Aucun compteur affiché.';
+        else{
+          var rv=SRPSmart.recent(dm), hs=dm.history||{}, hl=Object.keys(hs).filter(function(k){return !/\d{4}/.test(k);}).map(function(k){return k+' '+hs[k];}).join(' · ')||'aucun';
+          var t='<b>Compteur '+(dm.meter||'')+'</b><br>Ancien index : '+(dm.prev===''||dm.prev==null?'—':dm.prev)+'<br>Historique : '+hl+'<br>';
+          if(!cf.smart) t+='⚠️ Détection par historique <b>désactivée</b> : seul le seuil fixe'+(cf.fixed>0?' ('+cf.fixed+' m³)':' (aucun)')+' s’applique.';
+          else if(rv.length<cf.minHist) t+='⚠️ Pas assez d’historique ('+rv.length+' conso mensuelle'+(rv.length>1?'s':'')+' exploitable'+(rv.length>1?'s':'')+', il en faut '+cf.minHist+') : <b>aucune alerte intelligente</b> pour ce compteur, seul le seuil fixe'+(cf.fixed>0?' ('+cf.fixed+' m³)':' (aucun)')+' s’applique.';
+          else{ var sr=rv.slice().sort(function(a,b){return a-b;}),n=sr.length,md2=n%2?sr[(n-1)/2]:(sr[n/2-1]+sr[n/2])/2,th=Math.max(cf.minM3,cf.factor*md2);
+            t+='Conso mensuelles'+(rv.src==='archive'?' (base : archive 2025)':'')+' : '+rv.map(SRPSmart.fmt).join(', ')+' m³ (habituel ≈ '+SRPSmart.fmt(md2)+')<br>✅ Alerte dès <b>'+SRPSmart.fmt(th)+' m³</b>'+(cf.fixed>0?' (ou plus de '+cf.fixed+' m³)':'')+'.'; }
+          dg.innerHTML=t;
+        }
+      }
+    }catch(e){ var d2=$('ssDiag'); if(d2) d2.textContent='Diagnostic indisponible.'; }
+    function close(){ md.remove(); }
+    md.addEventListener('click',function(e){ if(e.target===md) close(); });
+    $('ssClose').onclick=close;
+    $('ssReset').onclick=function(){ SRPSmart.reset(); close(); refreshAll(); toast('Réglages par défaut rétablis.','success'); };
+    $('ssSave').onclick=function(){
+      var f=Number($('ssFactor').value), mn=Number($('ssMin').value), w=Math.round(Number($('ssWin').value)), fx=Number($('ssFixed').value);
+      SRPSmart.set({smart:$('ssSmart').checked,factor:(isFinite(f)&&f>=1)?f:2,minM3:(isFinite(mn)&&mn>=0)?mn:8,win:(isFinite(w)&&w>=2&&w<=11)?w:4,fixed:(isFinite(fx)&&fx>0)?fx:0});
+      try{ if(window.SRPExpected&&$('ssExpected')) SRPExpected.setOn($('ssExpected').checked); }catch(_){}
+      close(); refreshAll(); toast('Alertes intelligentes enregistrées.','success');
+    };
+  }
+  window.srpSmartSettings=openSettings;
+  function addMenuBtn(){
+    var a=$('v172AutoBtn'), sec=a&&a.parentNode; if(!sec||$('srpSmartBtn')) return false;
+    var b=document.createElement('button'); b.type='button'; b.id='srpSmartBtn'; b.className='side-menu-btn';
+    b.textContent='🧠 Alertes intelligentes'; b.onclick=function(){ try{ closeEntrySideMenu(); }catch(_){} openSettings(); };
+    sec.appendChild(b); return true;
+  }
+  (function boot(){ if(addMenuBtn()) return; var n=0,t=setInterval(function(){ if(addMenuBtn()||++n>40) clearInterval(t); },300); })();
+
+  /* ---------- (2) import : « Index MM/AAAA » -> historique des mois ---------- */
+  var HIST=[['mapHistJan',0],['mapHistFeb',1],['mapHistMar',2],['mapHistApr',3],['mapHistMay',4],['mapHistJun',5],['mapHistJul',6],['mapHistAug',7],['mapHistSep',8],['mapHistOct',9],['mapHistNov',10],['mapHistDec',11]];
+  function autoMapHistory(){
+    try{
+      if(!Array.isArray(rawJsonData)||!rawJsonData.length) return;
+      var cols=Object.keys(rawJsonData[0]).map(function(k){ var m=String(k).match(/^\s*index\s+(\d{1,2})\s*\/\s*(\d{4})\s*$/i); return m&&+m[1]>=1&&+m[1]<=12?{k:k,mo:+m[1]-1,p:(+m[2])*12+(+m[1]-1)}:null; }).filter(Boolean).sort(function(a,b){return b.p-a.p;});
+      if(!cols.length) return;
+      var latest=cols[0].p, used={}, n=0;
+      cols.forEach(function(c){
+        if(latest-c.p>11||used[c.mo]) return;
+        var id=HIST[c.mo][0], el=$(id); if(!el||el.value) return;
+        if(Array.prototype.some.call(el.options,function(o){return o.value===c.k;})){ el.value=c.k; used[c.mo]=1; n++; }
+      });
+      if(n) toast(n+' mois d’historique reliés automatiquement.','success');
+    }catch(e){ console.warn('V401 historique auto :',e); }
+  }
+  var prevApply=window.applyMapping;
+  window.applyMapping=async function(){ autoMapHistory(); return prevApply.apply(this,arguments); };
+
+  /* ---------- (3) rapport PDF d'analyse ---------- */
+  function consoOf(m){ var p=Number(m.prev), c=(m.current===''||m.current==null)?NaN:Number(m.current); return (isFinite(p)&&isFinite(c)&&m.prev!==''&&m.prev!=null)?c-p:NaN; }
+  function classify(m){
+    var read=(m.read===true)||(m.current!==''&&m.current!=null)||(m.anomaly&&m.anomaly!=='RAS');
+    var c=consoOf(m), hasC=isFinite(c), anom=m.anomaly&&m.anomaly!=='RAS';
+    var neg=hasC&&c<0;
+    var high=hasC&&c>0&&((m.type==='EAU'&&SRPSmart.high(m,c))||(m.type==='ELEC'&&c>200));
+    return {read:!!read,c:c,hasC:hasC,neg:neg,high:high,anom:!!anom};
+  }
+  function buildPdf(){
+    if(!allMetersData||!allMetersData.length) return toast('Aucune donnée','warn');
+    if(!window.jspdf||!window.jspdf.jsPDF) return toast('Le module PDF n’est pas disponible. Vérifiez la connexion puis réessayez.','warn');
+    try{ saveCurrentInputs(); }catch(_){}
+    var jsPDF=window.jspdf.jsPDF, doc=new jsPDF({unit:'pt',format:'a4'});
+    var W=doc.internal.pageSize.getWidth(), H=doc.internal.pageSize.getHeight(), mx=36, y=0;
+    var NAVY=[10,42,102], now=new Date();
+    var list=allMetersData.filter(function(m){return !m.skipped;}), info=list.map(classify);
+    var tot=list.length, lus=info.filter(function(i){return i.read;}).length;
+    var nHigh=info.filter(function(i){return i.high;}).length, nNeg=info.filter(function(i){return i.neg;}).length, nAn=info.filter(function(i){return i.anom;}).length;
+    var cs=info.filter(function(i){return i.hasC&&i.c>=0;}).map(function(i){return i.c;});
+    var sum=cs.reduce(function(a,b){return a+b;},0), srt=cs.slice().sort(function(a,b){return a-b;}), med=srt.length?srt[Math.floor(srt.length/2)]:0;
+    // bandeau
+    doc.setFillColor(NAVY[0],NAVY[1],NAVY[2]); doc.rect(0,0,W,70,'F');
+    doc.setTextColor(255); doc.setFont('helvetica','bold'); doc.setFontSize(18); doc.text('Smart RV — Rapport d’analyse',mx,32);
+    doc.setFont('helvetica','normal'); doc.setFontSize(9.5);
+    var tn=(typeof tourName!=='undefined'&&tourName)?(' · Tournée '+tourName):'';
+    doc.text('Généré le '+now.toLocaleDateString('fr-FR')+' à '+now.toLocaleTimeString('fr-FR',{hour:'2-digit',minute:'2-digit'})+tn,mx,50);
+    y=88;
+    // cartes
+    var cards=[['Compteurs',tot,[10,42,102]],['Relevés',lus,[22,163,74]],['Restants',tot-lus,[100,116,139]],['Élevées',nHigh,[217,119,6]],['Négatives',nNeg,[220,38,38]],['Anomalies',nAn,[220,38,38]]];
+    var cw=(W-mx*2-5*8)/6;
+    cards.forEach(function(c,i){
+      var x=mx+i*(cw+8);
+      doc.setFillColor(244,247,251); doc.roundedRect(x,y,cw,48,6,6,'F');
+      doc.setFillColor(c[2][0],c[2][1],c[2][2]); doc.rect(x,y+6,3,36,'F');
+      doc.setTextColor(c[2][0],c[2][1],c[2][2]); doc.setFont('helvetica','bold'); doc.setFontSize(17); doc.text(String(c[1]),x+10,y+25);
+      doc.setTextColor(90); doc.setFont('helvetica','normal'); doc.setFontSize(8); doc.text(c[0],x+10,y+39);
+    });
+    y+=62; doc.setTextColor(60); doc.setFontSize(9);
+    doc.text('Consommation totale des relevés : '+Math.round(sum)+' m³   ·   Médiane : '+SRPSmart.fmt(med)+' m³   ·   Détection intelligente : '+(SRPSmart.get().smart?'active':'désactivée')+(SRPSmart.get().fixed>0?'   ·   Seuil fixe : '+SRPSmart.get().fixed+' m³':''),mx,y);
+    y+=18;
+    function title(t){ doc.setTextColor(NAVY[0],NAVY[1],NAVY[2]); doc.setFont('helvetica','bold'); doc.setFontSize(11.5); doc.text(t,mx,y); y+=6; doc.setDrawColor(NAVY[0],NAVY[1],NAVY[2]); doc.setLineWidth(1); doc.line(mx,y,W-mx,y); y+=14; }
+    function head(cols){ doc.setFillColor(NAVY[0],NAVY[1],NAVY[2]); doc.rect(mx,y-10,W-mx*2,15,'F'); doc.setTextColor(255); doc.setFont('helvetica','bold'); doc.setFontSize(8); cols.forEach(function(c){doc.text(c[0],c[1],y);}); y+=13; doc.setTextColor(30); doc.setFont('helvetica','normal'); }
+    function room(n,cols){ if(y+n>H-40){ doc.addPage(); y=44; if(cols) head(cols); } }
+    // par tournée
+    var tr={}; list.forEach(function(m,i){ var t=String(m.tour||'(sans tournée)'); var o=tr[t]||(tr[t]={n:0,l:0,s:0}); o.n++; if(info[i].read) o.l++; if(info[i].hasC&&info[i].c>0) o.s+=info[i].c; });
+    var tks=Object.keys(tr).sort(function(a,b){return tr[b].n-tr[a].n;}).slice(0,25);
+    if(tks.length>1||(tks.length===1&&tks[0]!=='(sans tournée)')){
+      title('Par tournée');
+      var tc=[['TOURNÉE',mx+4],['COMPTEURS',mx+190],['RELEVÉS',mx+260],['% RELEVÉS',mx+325],['CONSO (m³)',mx+400]];
+      head(tc);
+      tks.forEach(function(t,i){ room(16,tc); if(i%2){ doc.setFillColor(246,248,251); doc.rect(mx,y-10,W-mx*2,14,'F'); }
+        var o=tr[t]; doc.setFontSize(8.5); doc.text(t.slice(0,34),mx+4,y); doc.text(String(o.n),mx+190,y); doc.text(String(o.l),mx+260,y); doc.text(Math.round(o.l*100/o.n)+' %',mx+325,y); doc.text(String(Math.round(o.s)),mx+400,y); y+=14; });
+      y+=10;
+    }
+    // à vérifier
+    var rev=[]; list.forEach(function(m,i){ var k=info[i]; if(k.neg) rev.push([0,m,k]); else if(k.high) rev.push([1,m,k]); else if(k.anom) rev.push([2,m,k]); });
+    rev.sort(function(a,b){ return a[0]-b[0] || (Math.abs(b[2].c||0)-Math.abs(a[2].c||0)); });
+    room(60,null); title('À vérifier ('+rev.length+')');
+    var rc=[['N° COMPTEUR',mx+4],['CLIENT',mx+92],['ANCIEN',mx+200],['NOUVEAU',mx+242],['CONSO',mx+290],['MOTIF',mx+330]];
+    head(rc);
+    var COL={0:[254,226,226],1:[254,243,199],2:[254,226,226]}, LAB={0:'NÉGATIF',1:'ÉLEVÉE',2:'ANOMALIE'};
+    if(!rev.length){ doc.setFontSize(9.5); doc.setTextColor(22,120,60); doc.text('Aucune lecture à vérifier. ',mx+4,y); y+=14; }
+    rev.forEach(function(r,i){
+      var m=r[1],k=r[2]; room(26,rc);
+      var col=COL[r[0]]; doc.setFillColor(col[0],col[1],col[2]); doc.rect(mx,y-10,W-mx*2,r[0]===1?24:14,'F');
+      doc.setTextColor(30); doc.setFontSize(8); doc.setFont('helvetica','normal');
+      doc.text(String(m.meter||'—').slice(0,17),mx+4,y); doc.text(String(m.name||'—').slice(0,24),mx+92,y);
+      doc.text(String(m.prev===''||m.prev==null?'—':m.prev),mx+200,y); doc.text(String(m.current===''||m.current==null?'—':m.current),mx+242,y);
+      doc.setFont('helvetica','bold'); doc.text(k.hasC?String(k.c):'—',mx+290,y); doc.setFont('helvetica','normal');
+      var mot=LAB[r[0]]+(m.anomaly&&m.anomaly!=='RAS'?' · '+String(m.anomaly).replace(/_/g,' '):'');
+      doc.text(mot.slice(0,32),mx+330,y);
+      if(r[0]===1){ var w=SRPSmart.why(m,k.c); if(w){ doc.setFontSize(7); doc.setTextColor(110,70,0); doc.text(doc.splitTextToSize(w,W-mx*2-10)[0],mx+4,y+10); } y+=10; }
+      y+=14;
+    });
+    // pieds de page
+    var pc=doc.internal.getNumberOfPages();
+    for(var p=1;p<=pc;p++){ doc.setPage(p); doc.setFontSize(8); doc.setTextColor(140); doc.text('Page '+p+' / '+pc+' — Smart RV',mx,H-20); }
+    doc.save('Rapport_Analyse_'+now.toISOString().slice(0,10)+'.pdf');
+    toast('Rapport PDF généré.','success');
+  }
+  var oldPdf=window.exportDailyReportPdf;
+  window.exportDailyReportPdf=function(){
+    try{ return buildPdf(); }
+    catch(e){ console.error('PDF analyse :',e); toast('Rapport amélioré indisponible : ancien format utilisé.','warn'); if(typeof oldPdf==='function') return oldPdf.apply(this,arguments); }
+  };
+  window.SRPSmartUI={classify:classify,autoMapHistory:autoMapHistory};
+})();
+</script>
+<script id="srp-export-v403">
+// V406 — Export Excel : (1) heure EXACTE avec secondes (vraie date/heure Excel, triable) ; (2) colonne « Ordre de lecture » ;
+//        (3) 2 feuilles seulement : « Analyse » (TABLEAU DE BORD : tuiles, anneau, barres, classement) + « Relevé ».
+(function(){
+  'use strict';
+  var FMT_DT='dd/mm/yyyy hh:mm:ss', NAVY='1F3864', BLUE='2F5597', BORD='B4C6E7';
+  function serial(d){ return (d.getTime()-d.getTimezoneOffset()*60000)/86400000+25569; }
+  function vdate(v){ if(!v) return null; var d=new Date(v); return isNaN(d.getTime())?null:d; }
+  function colOf(ws,title){
+    var rg=XLSX.utils.decode_range(ws['!ref']);
+    for(var c=rg.s.c;c<=rg.e.c;c++){ var x=ws[XLSX.utils.encode_cell({r:0,c:c})]; if(x&&String(x.v)===title) return c; }
+    return -1;
+  }
+  /* ---- niveaux (même vocabulaire que le tableau de bord de référence) ---- */
+  var LV=[ // nom, couleur anneau, texte, fond cellule
+    ['Très élevée','FFD966','7F6000','FFE699'],['Élevée','FFF2CC','9C6500','FFF2CC'],['Normale','A9D18E','375623','E2EFDA'],
+    ['Faible','F4C7A8','C55A11','FCE4D6'],['Nul','F2A57A','C55A11','F8CBAD'],['Négatif','E8908A','9C0006','F4B6B0'],
+    ['Anomalie','B4A7D6','5B3F8C','E4DFEC'],['Inhabité','BFBFBF','404040','EDEDED'],['Non relevé','D9D9D9','7F7F7F','F2F2F2']];
+  var LVI={}; LV.forEach(function(l,i){ LVI[l[0]]=i; });
+  function infoOf(m){
+    var cur=(m.current!==''&&m.current!=null)?Number(m.current):NaN;
+    var prv=(m.prev===''||m.prev==null)?NaN:Number(m.prev);
+    return {cur:isFinite(cur)?cur:null,prv:isFinite(prv)?prv:null,conso:(isFinite(cur)&&isFinite(prv))?cur-prv:null};
+  }
+  function levelOf(m,x,faibleMax){
+    var an=m.anomaly&&m.anomaly!=='RAS'?m.anomaly:'';
+    if(an&&an!=='INHABITE') return 'Anomalie';
+    if(an==='INHABITE') return 'Inhabité';
+    if(x.conso===null) return 'Non relevé';
+    var c=x.conso;
+    if(c<0) return 'Négatif';
+    if(c===0) return 'Nul';
+    if(m.type==='ELEC') return c>200?(c>400?'Très élevée':'Élevée'):'Normale';
+    var ev=SRPSmart.eval(m,c);
+    if(ev){ var t=ev.kind==='fixed'?SRPSmart.get().fixed:ev.thr; return c>=2*t?'Très élevée':'Élevée'; }
+    if(faibleMax>0&&c<=faibleMax) return 'Faible';
+    return 'Normale';
+  }
+  function levels(list){
+    var info=list.map(infoOf), eau=[];
+    info.forEach(function(x,k){ if(x.conso!==null&&x.conso>0&&list[k].type!=='ELEC') eau.push(x.conso); });
+    eau.sort(function(p,q){return p-q;});
+    var med=eau.length?(eau.length%2?eau[(eau.length-1)/2]:(eau[eau.length/2-1]+eau[eau.length/2])/2):0;
+    var faibleMax=med>=2?Math.floor(med/2):0;
+    return {info:info,eau:eau,med:med,faibleMax:faibleMax,lev:list.map(function(m,k){ return levelOf(m,info[k],faibleMax); })};
+  }
+  function stateOf(m){   // conservé pour compatibilité des tests
+    var x=infoOf(m), l=levelOf(m,x,0);
+    return {conso:x.conso,cur:x.cur,prv:x.prv,et:({'Anomalie':'ANOMALIE','Négatif':'CONSOMMATION NÉGATIVE','Très élevée':'CONSOMMATION ÉLEVÉE','Élevée':'CONSOMMATION ÉLEVÉE'})[l]||(x.conso===null?'NON RELEVÉ':'NORMAL')};
+  }
+
+  function styleReleve(ws,rg,list,LL,cN){
+    var H={}, c, r, i, th;
+    for(c=rg.s.c;c<=rg.e.c;c++){ var hc=ws[XLSX.utils.encode_cell({r:0,c:c})]; if(hc) H[String(hc.v)]=c; }
+    var bd=function(){ var o={style:'thin',color:{rgb:BORD}}; return {top:o,bottom:o,left:o,right:o}; };
+    var GROUP={'N°':NAVY,'Type':NAVY,'N° Client / Contrat':NAVY,'N° Compteur':NAVY,'Tournée':NAVY,'Client':NAVY,'Adresse':NAVY,'Téléphone':NAVY,
+      'Ancien Index':BLUE,'Nouvel Index':BLUE,'Consommation':BLUE,'État':'C55A11','Anomalie':'C55A11','Annotation':'C55A11','Niveau':'C55A11',
+      'Date/Heure Relevé':'0F766E','GPS':'0F766E','Photo':'0F766E','Ajouté':'0F766E','Réordonné':'0F766E','Saisi par':'0F766E','Ordre de lecture':'0F766E'};
+    for(c=rg.s.c;c<=rg.e.c;c++){
+      var hcell=ws[XLSX.utils.encode_cell({r:0,c:c})]; if(!hcell) continue;
+      hcell.s={fill:{fgColor:{rgb:GROUP[String(hcell.v)]||'595959'}},font:{bold:true,sz:10,color:{rgb:'FFFFFF'}},alignment:{horizontal:'center',vertical:'center',wrapText:true},border:bd()};
+    }
+    var LEFT={'Client':1,'Adresse':1,'Tournée':1};
+    for(i=0;i<list.length;i++){
+      r=i+1; if(r>rg.e.r) break;
+      var m=list[i], lv=LL.lev[i], L=LV[LVI[lv]], mc=H['N° Compteur']!==undefined?ws[XLSX.utils.encode_cell({r:r,c:H['N° Compteur']})]:null;
+      if(mc&&String(mc.v)!==String(m.meter||'')) continue;               // ligne non alignée : on ne touche à rien
+      var orange=(m.reordered===true), zebra=(i%2===0)?'FFFFFF':'F5F8FC';
+      ws[XLSX.utils.encode_cell({r:r,c:cN})]={t:'s',v:lv};
+      for(c=rg.s.c;c<=rg.e.c;c++){
+        var cell=ws[XLSX.utils.encode_cell({r:r,c:c})]; if(!cell) continue;
+        var title=''; for(var k in H){ if(H[k]===c){ title=k; break; } }
+        if(orange&&title!=='État'&&title!=='Niveau'&&title!=='Consommation') continue;      // ligne orange (réordonné) conservée telle quelle
+        var link=cell.l, st={fill:{fgColor:{rgb:zebra}},font:{sz:10,color:{rgb:'1F2937'}},alignment:{horizontal:LEFT[title]?'left':'center',vertical:'center',wrapText:!!LEFT[title]},border:bd()};
+        if(title==='Consommation'||title==='Niveau'){ st.fill={fgColor:{rgb:L[3]}}; st.font={sz:10,bold:true,color:{rgb:L[2]}}; }
+        if(title==='État'){ var ET={'NORMAL':'Normale','CONSOMMATION ÉLEVÉE':'Élevée','CONSOMMATION NÉGATIVE':'Négatif','ANOMALIE':'Anomalie','NON RELEVÉ':'Non relevé'}, EL=LV[LVI[(m.anomaly==='INHABITE')?'Inhabité':(ET[String(cell.v)]||'Non relevé')]]; st.fill={fgColor:{rgb:EL[3]}}; st.font={sz:10,bold:true,color:{rgb:EL[2]}}; }
+        if(title==='Consommation'&&cell.t==='n') cell.z='#,##0.##';
+        if(title==='Ancien Index'||title==='Nouvel Index'){ if(cell.t==='n') cell.z='#,##0'; st.font={sz:10,bold:title==='Nouvel Index',color:{rgb:'1F2937'}}; }
+        if(title==='N° Compteur'||title==='N° Client / Contrat') st.font={sz:10,bold:true,color:{rgb:NAVY}};
+        if(title==='Anomalie'&&cell.v&&String(cell.v)!=='RAS'){ st.fill={fgColor:{rgb:'E4DFEC'}}; st.font={sz:10,bold:true,color:{rgb:'5B3F8C'}}; }
+        if(title==='Annotation'&&/INHABIT/i.test(String(cell.v||''))){ st.fill={fgColor:{rgb:'EDEDED'}}; st.font={sz:10,bold:true,color:{rgb:'404040'}}; }
+        if(title==='État'&&m.anomaly==='INHABITE'){ cell.v='LOCAL INHABITÉ'; }
+        if(title==='GPS'||title==='Photo'){ if(link) st.font={sz:10,bold:true,underline:true,color:{rgb:'0563C1'}}; }
+        cell.s=st; if(link) cell.l=link;
+      }
+      var nc=ws[XLSX.utils.encode_cell({r:r,c:cN})]; nc.s={fill:{fgColor:{rgb:L[3]}},font:{sz:10,bold:true,color:{rgb:L[2]}},alignment:{horizontal:'center',vertical:'center'},border:bd()};
+      var rowh=ws['!rows']&&ws['!rows'][r]; if(rowh) rowh.hpt=Math.max(rowh.hpt||0,22);
+    }
+    if(!ws['!rows']) ws['!rows']=[]; ws['!rows'][0]={hpt:32};
+    if(Array.isArray(ws['!cols'])){ while(ws['!cols'].length<=cN) ws['!cols'].push({wch:14}); ws['!cols'][cN]={wch:16}; }
+  }
+  /* ----- Relevé : heure exacte + ordre de lecture + règle Annotation « 03_LOCAL INHABITIE » ----- */
+  function patchReleve(wb,list){
+    var ws=wb.Sheets['Relevé']; if(!ws||!ws['!ref']) return;
+    var cMeter=colOf(ws,'N° Compteur'), cT=colOf(ws,'Date/Heure Relevé'), cAn=colOf(ws,'Anomalie'), cAt=colOf(ws,'Annotation'), i;
+    var rg=XLSX.utils.decode_range(ws['!ref']);
+    var arr=[];
+    for(i=0;i<list.length;i++){ var d=vdate(list[i].readAt); if(d) arr.push({i:i,t:d.getTime()}); }
+    arr.sort(function(a,b){ return a.t-b.t || a.i-b.i; });
+    var rank={}; arr.forEach(function(x,k){ rank[x.i]=k+1; });
+    var cR=rg.e.c+1;
+    var hdr=ws[XLSX.utils.encode_cell({r:0,c:rg.e.c})];
+    ws[XLSX.utils.encode_cell({r:0,c:cR})]={t:'s',v:'Ordre de lecture',s:hdr&&hdr.s?hdr.s:undefined};
+    for(i=0;i<list.length;i++){
+      var r=i+1; if(r>rg.e.r) break;
+      var mc=cMeter>=0?ws[XLSX.utils.encode_cell({r:r,c:cMeter})]:null;
+      var aligned=!mc||String(mc.v)===String(list[i].meter||'');
+      var d2=vdate(list[i].readAt);
+      if(aligned&&list[i].anomaly==='INHABITE'&&cAn>=0&&cAt>=0){
+        var ca=ws[XLSX.utils.encode_cell({r:r,c:cAn})], cb=ws[XLSX.utils.encode_cell({r:r,c:cAt})];
+        if(ca) ca.v='RAS'; if(cb) cb.v='03_LOCAL INHABITIE';
+      }
+      if(aligned&&cT>=0&&d2){
+        var old=ws[XLSX.utils.encode_cell({r:r,c:cT})];
+        ws[XLSX.utils.encode_cell({r:r,c:cT})]={t:'n',v:serial(d2),z:FMT_DT,s:old&&old.s?old.s:undefined};
+      }
+      var prevCell=ws[XLSX.utils.encode_cell({r:r,c:rg.e.c})];
+      var st=prevCell&&prevCell.s?JSON.parse(JSON.stringify(prevCell.s)):undefined;
+      if(st){ st.alignment=Object.assign({},st.alignment||{},{horizontal:'center'}); }
+      if(aligned&&rank[i]!==undefined) ws[XLSX.utils.encode_cell({r:r,c:cR})]={t:'n',v:rank[i],s:st};
+      else ws[XLSX.utils.encode_cell({r:r,c:cR})]={t:'s',v:'',s:st};
+    }
+    rg.e.c=cR;
+    // colonne « Niveau » (mêmes niveaux que le tableau de bord)
+    var LL=levels(list), cN=cR+1, hdr2=ws[XLSX.utils.encode_cell({r:0,c:cR})];
+    ws[XLSX.utils.encode_cell({r:0,c:cN})]={t:'s',v:'Niveau',s:hdr2&&hdr2.s?hdr2.s:undefined};
+    rg.e.c=cN; ws['!ref']=XLSX.utils.encode_range(rg);
+    try{ styleReleve(ws,rg,list,LL,cN); }catch(e){ console.warn('V406 style Relevé :',e); }
+    if(ws['!autofilter']) ws['!autofilter']={ref:ws['!ref']};
+    if(Array.isArray(ws['!cols'])){
+      if(cT>=0&&ws['!cols'][cT]) ws['!cols'][cT]={wch:21};
+      while(ws['!cols'].length<cR) ws['!cols'].push({wch:14});
+      ws['!cols'][cR]={wch:15};
+    }
+  }
+
+  /* ----- Analyse = tableau de bord ----- */
+  function buildDash(list){
+    var ws={}, merges=[], meta={};
+    function a(r,c){ return XLSX.utils.encode_cell({r:r,c:c}); }
+    function box(c,t){ var o={style:'thin',color:{rgb:c||BORD}}; return {top:o,bottom:o,left:o,right:o}; }
+    function put(r,c,v,s,z){ var cell={t:(typeof v==='number')?'n':'s',v:(v===null||v===undefined)?'':v}; if(s) cell.s=s; if(z) cell.z=z; ws[a(r,c)]=cell; }
+    function span(r,c1,c2,v,s,z){ put(r,c1,v,s,z); for(var c=c1+1;c<=c2;c++) put(r,c,'',s); if(c2>c1) merges.push({s:{r:r,c:c1},e:{r:r,c:c2}}); }
+    var cfg=SRPSmart.get(), now=new Date(), n=list.length;
+    var LL=levels(list), info=LL.info, eau=LL.eau, med=LL.med, lev=LL.lev, i;
+    var cnt={}; LV.forEach(function(l){ cnt[l[0]]=0; }); lev.forEach(function(l){ cnt[l]++; });
+    var eauSum=eau.reduce(function(p,q){return p+q;},0), eauMax=eau.length?eau[eau.length-1]:0;
+    var lus=info.filter(function(x){return x.cur!==null;}).length;
+    var nPhoto=list.filter(function(m){return !!m.photo;}).length;
+    var COLS=[2,22,12,12,12,12,12,3,22,18,12,20,58];
+    /* bandeau */
+    span(0,1,12,'TABLEAU DE BORD — ANALYSE DE CONSOMMATION',{fill:{fgColor:{rgb:NAVY}},font:{bold:true,sz:18,color:{rgb:'FFFFFF'}},alignment:{horizontal:'center',vertical:'center'}});
+    /* tuiles : [libellé, valeur, couleur, c1, c2] */
+    function tiles(rowL,T){
+      T.forEach(function(t){
+        span(rowL,t[3],t[4],t[0],{fill:{fgColor:{rgb:t[2]}},font:{bold:true,sz:10,color:{rgb:'FFFFFF'}},alignment:{horizontal:'center',vertical:'center'}});
+        span(rowL+1,t[3],t[4],t[1],{fill:{fgColor:{rgb:'F2F2F2'}},font:{bold:true,sz:26,color:{rgb:t[2]}},alignment:{horizontal:'center',vertical:'center'}},t[5]||(typeof t[1]==='number'?'#,##0':undefined));
+      });
+    }
+    tiles(2,[['Compteurs suivis',n,NAVY,1,2],['Très élevées',cnt['Très élevée'],'BF9000',3,4],['Élevées',cnt['Élevée'],'D4A72C',5,6],['Normales',cnt['Normale'],'548235',8,9],['Faibles / nulles',cnt['Faible']+cnt['Nul'],'C55A11',10,12]]);
+    tiles(5,[['Négatifs',cnt['Négatif'],'C00000',1,2],['Anomalies',cnt['Anomalie'],'7030A0',3,4],['Inhabités (03)',cnt['Inhabité'],'595959',5,6],['Non relevés',cnt['Non relevé'],'7F7F7F',8,9],['Avancement',n?lus/n:0,BLUE,10,12,'0%']]);
+    function fmt(x){ return (Math.round(x*10)/10).toString().replace('.',','); }
+    span(7,1,12,'Conso eau des relevés : '+Math.round(eauSum).toLocaleString('fr-FR')+' m³   |   Médiane : '+fmt(med)+' m³   |   Maximum : '+fmt(eauMax)+' m³   |   Photos : '+nPhoto+'   |   Exporté le '+now.toLocaleDateString('fr-FR')+' à '+now.toLocaleTimeString('fr-FR'),{font:{italic:true,sz:9,color:{rgb:NAVY}},alignment:{horizontal:'left'}});
+    /* répartition */
+    var H=9, TH={fill:{fgColor:{rgb:BLUE}},font:{bold:true,sz:11,color:{rgb:'FFFFFF'}},alignment:{horizontal:'center',vertical:'center'},border:box(BLUE)};
+    put(H,1,'Répartition par niveau',{font:{bold:true,sz:12,color:{rgb:NAVY}}});
+    put(H+1,1,'Niveau',TH); put(H+1,2,'Compteurs',TH);
+    LV.forEach(function(l,k){
+      put(H+2+k,1,l[0],{fill:{fgColor:{rgb:l[3]}},font:{sz:11,bold:true,color:{rgb:l[2]}},border:box()});
+      put(H+2+k,2,cnt[l[0]],{font:{bold:true,sz:11},alignment:{horizontal:'center'},border:box()},'#,##0');
+    });
+    meta.dough={r1:H+3,r2:H+2+LV.length};            // lignes Excel 1-based
+    meta.doughVals=LV.map(function(l){return cnt[l[0]];});
+    /* classement des cas à surveiller */
+    put(H,8,'À surveiller — classement par gravité',{font:{bold:true,sz:12,color:{rgb:NAVY}}});
+    span(H+1,8,9,'Client · N° compteur',TH); put(H+1,10,'m³',TH); put(H+1,11,'Niveau',TH); put(H+1,12,'Pourquoi',TH);
+    var grp={'Très élevée':0,'Élevée':1,'Négatif':2,'Anomalie':3}, rk=[];
+    list.forEach(function(m,k){ if(grp[lev[k]]!==undefined) rk.push(k); });
+    rk.sort(function(p,q){ var gp=grp[lev[p]],gq=grp[lev[q]]; if(gp!==gq) return gp-gq;
+      var cp=info[p].conso,cq=info[q].conso; if(cp===null) cp=-1e9; if(cq===null) cq=-1e9;
+      return lev[p]==='Négatif'?(cp-cq):(cq-cp); });
+    var LIM=30, total=rk.length; rk=rk.slice(0,LIM);
+    var r0=H+2;
+    rk.forEach(function(k,j){
+      var m=list[k], x=info[k], L=LV[LVI[lev[k]]], r=r0+j, nm=String(m.name||'—')+' · '+String(m.meter||'');
+      if(nm.length>42) nm=nm.slice(0,41)+'…';
+      var base={font:{sz:10},border:box()};
+      span(r,8,9,nm,base);
+      put(r,10,x.conso===null?'':x.conso,{fill:{fgColor:{rgb:L[3]}},font:{bold:true,sz:10,color:{rgb:L[2]}},alignment:{horizontal:'center'},border:box()},'#,##0.##');
+      put(r,11,lev[k],{fill:{fgColor:{rgb:L[3]}},font:{bold:true,sz:10,color:{rgb:L[2]}},alignment:{horizontal:'center'},border:box()});
+      var why=lev[k]==='Négatif'?'Nouvel index inférieur à l’ancien index.':(lev[k]==='Anomalie'?String(m.anomaly||'').replace(/_/g,' '):(m.type==='EAU'?SRPSmart.why(m,x.conso):'Au-dessus du seuil (200 kWh).'));
+      put(r,12,why,{font:{sz:9,color:{rgb:'595959'}},border:box(),alignment:{wrapText:false}});
+    });
+    var rEnd=r0+rk.length;
+    if(!rk.length){ span(r0,8,12,'Rien à surveiller : aucune consommation anormale.',{font:{sz:10,color:{rgb:'166534'}},border:box()}); rEnd=r0+1; }
+    meta.bar={r1:r0+1,r2:r0+Math.min(15,rk.length)};
+    meta.barN=Math.min(15,rk.length);
+    meta.barCats=rk.slice(0,15).map(function(k){ var nm=String(list[k].name||'—'); return (nm.length>24?nm.slice(0,23)+'…':nm)+' · '+String(list[k].meter||''); });
+    meta.barVals=rk.slice(0,15).map(function(k){ return info[k].conso; });
+    meta.doughRow0=H+13;                                  // ancrage (0-based) de l'anneau : sous le tableau des niveaux
+    meta.barRow0=H+13+22;
+    var note=(total>LIM?('+ '+(total-LIM)+' autre(s) cas : voir la feuille « Relevé ».  '):'')+'Très élevée = au moins 2× le seuil d’alerte. Seuil : '+(cfg.fixed>0?('> '+cfg.fixed+' m³ ou '):'')+(cfg.smart?('≥ ×'+cfg.factor+' la conso habituelle du compteur (min. '+cfg.minM3+' m³)'):'seuil fixe seul')+'.';
+    span(rEnd,8,12,note,{font:{italic:true,sz:9,color:{rgb:'595959'}}});
+    /* avancement par tournée */
+    var T={};
+    list.forEach(function(m,k){ var t=String(m.tour||(typeof tourName!=='undefined'?tourName:'')||'(sans tournée)'); var o=T[t]||(T[t]={n:0,l:0}); o.n++; if(info[k].cur!==null) o.l++; });
+    var tk=Object.keys(T).sort(function(p,q){return T[q].n-T[p].n;}).slice(0,15), r1=rEnd+2;
+    put(r1,8,'Avancement par tournée',{font:{bold:true,sz:12,color:{rgb:NAVY}}});
+    span(r1+1,8,9,'Tournée',TH); put(r1+1,10,'Relevés',TH); put(r1+1,11,'Avancement',TH);
+    tk.forEach(function(t,j){
+      var o=T[t], pc=o.n?o.l/o.n:0, col=pc>=0.8?['E2EFDA','375623']:(pc>=0.5?['FFF2CC','9C6500']:['FCE4D6','C55A11']), r=r1+2+j;
+      span(r,8,9,t,{font:{sz:10},border:box()});
+      put(r,10,o.l+' / '+o.n,{font:{sz:10},alignment:{horizontal:'center'},border:box()});
+      put(r,11,pc,{fill:{fgColor:{rgb:col[0]}},font:{bold:true,sz:10,color:{rgb:col[1]}},alignment:{horizontal:'center'},border:box()},'0%');
+    });
+    var last=Math.max(rEnd,r1+1+tk.length,H+2+LV.length);
+    ws['!ref']=XLSX.utils.encode_range({s:{r:0,c:0},e:{r:Math.max(last,meta.barRow0+16),c:12}});
+    ws['!cols']=COLS.map(function(w){return {wch:w};});
+    ws['!merges']=merges;
+    var rows=[]; rows[0]={hpt:32}; rows[3]={hpt:38}; rows[6]={hpt:38}; rows[2]={hpt:18}; rows[5]={hpt:18};
+    ws['!rows']=rows;
+    return {ws:ws,meta:meta};
+  }
+
+  /* ----- graphiques natifs (anneau + barres) injectés dans le .xlsx ----- */
+  function esc(s){ return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+  function strCache(a){ return '<c:strCache><c:ptCount val="'+a.length+'"/>'+a.map(function(v,i){return '<c:pt idx="'+i+'"><c:v>'+esc(v)+'</c:v></c:pt>';}).join('')+'</c:strCache>'; }
+  function numCache(a,f){ return '<c:numCache><c:formatCode>'+(f||'General')+'</c:formatCode><c:ptCount val="'+a.length+'"/>'+a.map(function(v,i){return (v===null||v==='')?'':'<c:pt idx="'+i+'"><c:v>'+v+'</c:v></c:pt>';}).join('')+'</c:numCache>'; }
+  var NS='xmlns:c="http://schemas.openxmlformats.org/drawingml/2006/chart" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"';
+  function title(t){ return '<c:title><c:tx><c:rich><a:bodyPr/><a:lstStyle/><a:p><a:pPr><a:defRPr sz="1300" b="1"/></a:pPr><a:r><a:rPr lang="fr-FR" sz="1300" b="1"/><a:t>'+esc(t)+'</a:t></a:r></a:p></c:rich></c:tx><c:overlay val="0"/></c:title><c:autoTitleDeleted val="0"/>'; }
+  var TAIL='<c:plotVisOnly val="1"/><c:dispBlanksAs val="gap"/></c:chart><c:spPr><a:solidFill><a:srgbClr val="FFFFFF"/></a:solidFill><a:ln><a:solidFill><a:srgbClr val="BFC8D8"/></a:solidFill></a:ln></c:spPr></c:chartSpace>';
+  function doughnutXml(meta){
+    var cats=LV.map(function(l){return l[0];}), q="'Analyse'!";
+    var dpt=LV.map(function(l,i){ return '<c:dPt><c:idx val="'+i+'"/><c:bubble3D val="0"/><c:spPr><a:solidFill><a:srgbClr val="'+l[1]+'"/></a:solidFill><a:ln w="12700"><a:solidFill><a:srgbClr val="FFFFFF"/></a:solidFill></a:ln></c:spPr></c:dPt>'; }).join('');
+    return '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><c:chartSpace '+NS+'><c:roundedCorners val="0"/><c:chart>'+title('Répartition des niveaux')+
+      '<c:plotArea><c:layout/><c:doughnutChart><c:varyColors val="1"/><c:ser><c:idx val="0"/><c:order val="0"/><c:tx><c:strRef><c:f>'+q+'$C$'+(meta.dough.r1-1)+'</c:f>'+strCache(['Compteurs'])+'</c:strRef></c:tx>'+dpt+
+      '<c:dLbls><c:numFmt formatCode="0;;;" sourceLinked="0"/><c:spPr><a:noFill/><a:ln><a:noFill/></a:ln></c:spPr><c:showLegendKey val="0"/><c:showVal val="1"/><c:showCatName val="0"/><c:showSerName val="0"/><c:showPercent val="0"/><c:showBubbleSize val="0"/><c:showLeaderLines val="0"/></c:dLbls>'+
+      '<c:cat><c:strRef><c:f>'+q+'$B$'+meta.dough.r1+':$B$'+meta.dough.r2+'</c:f>'+strCache(cats)+'</c:strRef></c:cat><c:val><c:numRef><c:f>'+q+'$C$'+meta.dough.r1+':$C$'+meta.dough.r2+'</c:f>'+numCache(meta.doughVals)+'</c:numRef></c:val></c:ser>'+
+      '<c:firstSliceAng val="0"/><c:holeSize val="55"/></c:doughnutChart></c:plotArea><c:legend><c:legendPos val="b"/><c:overlay val="0"/></c:legend>'+TAIL;
+  }
+  function barXml(meta){
+    var q="'Analyse'!";
+    return '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><c:chartSpace '+NS+'><c:roundedCorners val="0"/><c:chart>'+title('Principaux écarts de consommation (m³)')+
+      '<c:plotArea><c:layout/><c:barChart><c:barDir val="bar"/><c:grouping val="clustered"/><c:varyColors val="0"/><c:ser><c:idx val="0"/><c:order val="0"/><c:tx><c:strRef><c:f>'+q+'$K$'+(meta.bar.r1-1)+'</c:f>'+strCache(['m³'])+'</c:strRef></c:tx>'+
+      '<c:spPr><a:solidFill><a:srgbClr val="'+BLUE+'"/></a:solidFill></c:spPr><c:invertIfNegative val="1"/>'+
+      '<c:dLbls><c:numFmt formatCode="#,##0.#" sourceLinked="0"/><c:spPr><a:noFill/><a:ln><a:noFill/></a:ln></c:spPr><c:showLegendKey val="0"/><c:showVal val="1"/><c:showCatName val="0"/><c:showSerName val="0"/><c:showPercent val="0"/><c:showBubbleSize val="0"/></c:dLbls>'+
+      '<c:cat><c:strRef><c:f>'+q+'$I$'+meta.bar.r1+':$I$'+meta.bar.r2+'</c:f>'+strCache(meta.barCats)+'</c:strRef></c:cat><c:val><c:numRef><c:f>'+q+'$K$'+meta.bar.r1+':$K$'+meta.bar.r2+'</c:f>'+numCache(meta.barVals,'#,##0.##')+'</c:numRef></c:val>'+
+      '<c:extLst><c:ext uri="{6F2FDCE9-48DA-4B69-8628-5D25D57E5C99}" xmlns:c14="http://schemas.microsoft.com/office/drawing/2007/8/2/chart"><c14:invertSolidFillFmt><c14:spPr><a:solidFill><a:srgbClr val="C00000"/></a:solidFill></c14:spPr></c14:invertSolidFillFmt></c:ext></c:extLst></c:ser>'+
+      '<c:gapWidth val="45"/><c:axId val="10"/><c:axId val="100"/></c:barChart>'+
+      '<c:catAx><c:axId val="10"/><c:scaling><c:orientation val="maxMin"/></c:scaling><c:delete val="0"/><c:axPos val="l"/><c:numFmt formatCode="General" sourceLinked="0"/><c:majorTickMark val="none"/><c:minorTickMark val="none"/><c:tickLblPos val="low"/><c:crossAx val="100"/><c:crosses val="autoZero"/><c:auto val="1"/><c:lblAlgn val="ctr"/><c:lblOffset val="100"/><c:noMultiLvlLbl val="1"/></c:catAx>'+
+      '<c:valAx><c:axId val="100"/><c:scaling><c:orientation val="minMax"/></c:scaling><c:delete val="0"/><c:axPos val="t"/><c:majorGridlines><c:spPr><a:ln><a:solidFill><a:srgbClr val="E5E7EB"/></a:solidFill></a:ln></c:spPr></c:majorGridlines><c:numFmt formatCode="#,##0" sourceLinked="0"/><c:majorTickMark val="none"/><c:minorTickMark val="none"/><c:tickLblPos val="nextTo"/><c:crossAx val="10"/><c:crosses val="autoZero"/><c:crossBetween val="between"/></c:valAx></c:plotArea>'+TAIL;
+  }
+  function anchor(id,rId,row0,cx,cy,name){
+    return '<xdr:oneCellAnchor><xdr:from><xdr:col>1</xdr:col><xdr:colOff>0</xdr:colOff><xdr:row>'+row0+'</xdr:row><xdr:rowOff>0</xdr:rowOff></xdr:from><xdr:ext cx="'+cx+'" cy="'+cy+'"/><xdr:graphicFrame macro=""><xdr:nvGraphicFramePr><xdr:cNvPr id="'+id+'" name="'+name+'"/><xdr:cNvGraphicFramePr/></xdr:nvGraphicFramePr><xdr:xfrm><a:off x="0" y="0"/><a:ext cx="0" cy="0"/></xdr:xfrm><a:graphic><a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/chart"><c:chart xmlns:c="http://schemas.openxmlformats.org/drawingml/2006/chart" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" r:id="'+rId+'"/></a:graphicData></a:graphic></xdr:graphicFrame><xdr:clientData/></xdr:oneCellAnchor>';
+  }
+  async function inject(u8,meta){
+    var zip=await JSZip.loadAsync(u8);
+    var wbx=await zip.file('xl/workbook.xml').async('string');
+    var rels=await zip.file('xl/_rels/workbook.xml.rels').async('string');
+    var m=wbx.match(/<sheet [^>]*name="Analyse"[^>]*>/); if(!m) throw new Error('feuille Analyse introuvable');
+    var rid=(m[0].match(/r:id="([^"]+)"/)||[])[1];
+    var rm=rels.match(new RegExp('<Relationship [^>]*Id="'+rid+'"[^>]*>')); if(!rm) throw new Error('relation introuvable');
+    var tg=(rm[0].match(/Target="([^"]+)"/)||[])[1].replace(/^\//,''); var sheetPath=tg.indexOf('xl/')===0?tg:'xl/'+tg;
+    try{   // feuille « Relevé » : SEULE la première ligne est figée (aucune colonne figée : défilement libre sur téléphone) (échec sans conséquence)
+      var m2=wbx.match(/<sheet [^>]*name="Relevé"[^>]*>/), rid2=m2&&(m2[0].match(/r:id="([^"]+)"/)||[])[1], rm2=rid2&&rels.match(new RegExp('<Relationship [^>]*Id="'+rid2+'"[^>]*>'));
+      if(rm2){ var tg2=(rm2[0].match(/Target="([^"]+)"/)||[])[1].replace(/^\//,''), p2=tg2.indexOf('xl/')===0?tg2:'xl/'+tg2, x2=await zip.file(p2).async('string');
+        if(!/<pane /.test(x2)){
+          var pane='<pane ySplit="1" topLeftCell="A2" activePane="bottomLeft" state="frozen"/><selection pane="bottomLeft" activeCell="A2" sqref="A2"/>';
+          var x3=x2.replace(/<sheetView([^>]*?)\/>/,'<sheetView$1>'+pane+'</sheetView>');
+          if(x3===x2) x3=x2.replace(/(<sheetView[^>]*>)/,'$1'+pane);
+          if(x3!==x2) zip.file(p2,x3); } }
+    }catch(e2){ console.warn('V406 gel des volets :',e2); }
+    var sx=await zip.file(sheetPath).async('string');
+    if(/<drawing[ >]/.test(sx)||/<legacyDrawing/.test(sx)) throw new Error('dessin déjà présent');
+    var relPath=sheetPath.replace('worksheets/','worksheets/_rels/')+'.rels', relx=zip.file(relPath)?await zip.file(relPath).async('string'):null;
+    if(relx&&/Id="rIdSrpDr"/.test(relx)) throw new Error('déjà injecté');
+    var R='<Relationship Id="rIdSrpDr" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/drawing" Target="../drawings/drawingSrp1.xml"/>';
+    zip.file(relPath, relx?relx.replace('</Relationships>',R+'</Relationships>'):'<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'+R+'</Relationships>');
+    if(!/xmlns:r=/.test(sx.match(/<worksheet[^>]*>/)[0])) sx=sx.replace('<worksheet','<worksheet xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"');
+    sx=sx.replace(/<sheetView(?![a-zA-Z])/,'<sheetView showGridLines="0"');
+    if(!/<sheetView[^>]*showGridLines/.test(sx)) throw new Error('vue introuvable');
+    // impression / PDF : paysage, une page de large
+    if(!/<sheetPr/.test(sx)) sx=sx.replace(/(<worksheet[^>]*>)/,'$1<sheetPr><pageSetUpPr fitToPage="1"/></sheetPr>');
+    if(!/<pageSetup/.test(sx)) sx=/<pageMargins[^>]*\/>/.test(sx)?sx.replace(/(<pageMargins[^>]*\/>)/,'$1<pageSetup orientation="landscape" fitToWidth="1" fitToHeight="0"/>'):sx;
+    sx=sx.replace('</worksheet>','<drawing r:id="rIdSrpDr"/></worksheet>');
+    zip.file(sheetPath,sx);
+    var dr='<?xml version="1.0" encoding="UTF-8" standalone="yes"?><xdr:wsDr xmlns:xdr="http://schemas.openxmlformats.org/drawingml/2006/spreadsheetDrawing" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main">'+
+      anchor(2,'rId1',meta.doughRow0,4320000,3240000,'Anneau niveaux')+(meta.barN>0?anchor(3,'rId2',meta.barRow0,6840000,Math.max(2160000,260000*meta.barN+900000),'Barres écarts'):'')+'</xdr:wsDr>';
+    zip.file('xl/drawings/drawingSrp1.xml',dr);
+    zip.file('xl/drawings/_rels/drawingSrp1.xml.rels','<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/chart" Target="../charts/chartSrp1.xml"/>'+(meta.barN>0?'<Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/chart" Target="../charts/chartSrp2.xml"/>':'')+'</Relationships>');
+    zip.file('xl/charts/chartSrp1.xml',doughnutXml(meta));
+    if(meta.barN>0) zip.file('xl/charts/chartSrp2.xml',barXml(meta));
+    var ct=await zip.file('[Content_Types].xml').async('string');
+    var add='<Override PartName="/xl/drawings/drawingSrp1.xml" ContentType="application/vnd.openxmlformats-officedocument.drawing+xml"/><Override PartName="/xl/charts/chartSrp1.xml" ContentType="application/vnd.openxmlformats-officedocument.drawingml.chart+xml"/>'+(meta.barN>0?'<Override PartName="/xl/charts/chartSrp2.xml" ContentType="application/vnd.openxmlformats-officedocument.drawingml.chart+xml"/>':'');
+    zip.file('[Content_Types].xml',ct.replace('</Types>',add+'</Types>'));
+    return await zip.generateAsync({type:'uint8array',compression:'DEFLATE'});
+  }
+
+  var prevBuild=window.buildExportWorkbook;
+  window.buildExportWorkbook=function(){
+    var wb=prevBuild.apply(this,arguments);
+    try{
+      var list=(typeof v231ExportOrdered==='function')?v231ExportOrdered():allMetersData;
+      patchReleve(wb,list);
+      var d=buildDash(list);
+      wb.Sheets['Analyse']=d.ws; delete wb.Sheets['Synthèse'];
+      wb.SheetNames=['Analyse'].concat(wb.SheetNames.filter(function(n){return n!=='Analyse'&&n!=='Synthèse';}));
+      try{ Object.defineProperty(wb,'__srp',{value:d.meta,enumerable:false,configurable:true}); }catch(_){ wb.__srp=d.meta; }
+    }catch(e){ console.error('V406 export :',e); }
+    return wb;
+  };
+  // Octets du .xlsx avec graphiques ; en cas de problème : fichier sans graphiques (jamais d'échec d'export)
+  window.SRPXlsxBytes=async function(wb){
+    var u8=XLSX.write(wb,{bookType:'xlsx',type:'array'});
+    try{ if(wb&&wb.__srp&&typeof JSZip!=='undefined') return await inject(u8 instanceof Uint8Array?u8:new Uint8Array(u8),wb.__srp); }
+    catch(e){ console.warn('V406 graphiques non ajoutés :',e); }
+    return u8;
+  };
+  window.SRPWriteXlsx=async function(wb,name){
+    var bytes=await window.SRPXlsxBytes(wb);
+    var blob=new Blob([bytes],{type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'});
+    var url=URL.createObjectURL(blob), a=document.createElement('a');
+    a.href=url; a.download=name; document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(function(){ URL.revokeObjectURL(url); },60000);
+  };
+  window.SRPExportV403={stateOf:stateOf,buildDash:buildDash,patchReleve:patchReleve,inject:inject,levelOf:levelOf};
+})();
+</script>
+
+<script id="srp-cloud-badge">
+/* V411 — Pastille d'état de la synchronisation cloud (affichage seul : ne modifie ni la logique de sync ni les données). */
+(function(){
+  'use strict';
+  function ls(k){ try{ return localStorage.getItem(k); }catch(_){ return null; } }
+  function hm(t){ try{ return new Date(t).toLocaleTimeString('fr-FR',{hour:'2-digit',minute:'2-digit'}); }catch(_){ return ''; } }
+  function day(t){ try{ return new Date(t).toLocaleDateString('fr-FR',{day:'2-digit',month:'2-digit'}); }catch(_){ return ''; } }
+  var el=null;
+  function mk(){
+    if(el) return el;
+    el=document.createElement('button'); el.type='button'; el.id='srpCloudBadge';
+    el.style.cssText='position:fixed;bottom:calc(env(safe-area-inset-bottom,0px) + 6px);left:50%;transform:translateX(-50%);z-index:50;border:1px solid #cbd5e1;border-radius:999px;padding:2px 10px;font:700 11px/1.4 system-ui,sans-serif;background:rgba(255,255,255,.94);color:#0f172a;box-shadow:0 1px 4px rgba(0,0,0,.15);display:none;max-width:90vw;white-space:nowrap;overflow:hidden;text-overflow:ellipsis';
+    el.onclick=function(){ try{ if(window.openCloudSync) window.openCloudSync(); else alert('Synchronisation cloud indisponible dans cette version : installez le dernier APK.'); }catch(_){} };
+    document.body.appendChild(el); return el;
+  }
+  function visible(){ var p=document.getElementById('entryPage'); return !!p && !p.classList.contains('hidden') && p.offsetParent!==null; }
+  function state(){
+    var C=window.SRPCloud, T=C&&C._t;
+    if(!T) return {t:'☁️ Cloud : non disponible (ancienne version)',c:'#b45309',bg:'#fffbeb'};
+    var S=T.S||{}, last=Number(ls('smartrv_cloud_last')||0), min=Number(ls('smartrv_cloud_min')===null?60:ls('smartrv_cloud_min'));
+    if(S.busy) return {t:'⏳ Cloud : envoi en cours…',c:'#1d4ed8',bg:'#eff6ff'};
+    if(S.err) return {t:'⚠️ Cloud : échec — touchez',c:'#b91c1c',bg:'#fef2f2'};
+    if(!min) return {t:'☁️ Cloud : désactivé',c:'#64748b',bg:'#f1f5f9'};
+    var nt=T.net&&T.net(); if(nt&&!nt.allowed&&navigator.onLine!==false) return {t:'📶 Cloud : en attente du Wi-Fi'+(last?' · dernière synchro '+hm(last):''),c:'#b45309',bg:'#fffbeb'};
+    if(navigator.onLine===false) return {t:'📴 Hors ligne'+(last?' · dernière synchro '+hm(last):''),c:'#b45309',bg:'#fffbeb'};
+    if(!last) return {t:'☁️ Cloud : pas encore synchronisé',c:'#b45309',bg:'#fffbeb'};
+    var same=new Date(last).toDateString()===new Date().toDateString();
+    var age=(Date.now()-last)/60000, old=min>0&&age>Math.max(min*3,180);
+    var info=String(ls('smartrv_cloud_info')||'').split('\n')[0];
+    return {t:(old?'🟠':'✅')+' Cloud '+(same?hm(last):day(last)+' '+hm(last))+(info?' · '+info:''),c:old?'#b45309':'#166534',bg:old?'#fffbeb':'#f0fdf4'};
+  }
+  function tick(){
+    try{
+      var b=mk(); if(!visible()){ b.style.display='none'; return; }
+      var s=state(); b.textContent=s.t; b.style.color=s.c; b.style.background=s.bg; b.style.display='block';
+    }catch(_){}
+  }
+  function init(){ setInterval(tick,2000); setTimeout(tick,1500); }
+  if(document.readyState==='loading') document.addEventListener('DOMContentLoaded',init); else init();
+})();
+</script>
+
+<script id="v412-highphoto">
+/* V412 — Alerte « consommation élevée » : la photo prise depuis cette fenêtre VAUT confirmation.
+   Pas d'éditeur de photo, pas de seconde fenêtre : la photo est enregistrée puis on passe au compteur suivant. */
+(function(){
+  var o=window.capturePhoto; if(typeof o!=='function'||o._v412) return;
+  var w=async function(ev){
+    var hp=!!window.__v412HighPhoto; window.__v412HighPhoto=false;
+    var box=document.getElementById('centralAlert'), title=document.getElementById('alertTitle');
+    var inAlert=hp&&box&&getComputedStyle(box).display!=='none'&&title&&/lev/i.test(title.textContent||'');
+    var hasFile=!!(ev&&ev.target&&ev.target.files&&ev.target.files[0]);
+    if(inAlert&&hasFile) window.__v224SkipEditor=true;
+    var m=(typeof filteredMeters!=='undefined'&&filteredMeters)?filteredMeters[currentIndex]:null;
+    var r=await o.apply(this,arguments);
+    if(inAlert&&hasFile&&m&&m.photo){
+      try{ acknowledgeWarning(m,'high'); hideAlert(); await persistCurrentMeter(m); await nextMeter(); }catch(e){ console.error('v412',e); }
+    }
+    return r;
+  };
+  w._v412=true; window.capturePhoto=w;
+})();
+</script>
+
+<script id="srp-expected-v415">
+/* V415 — « Index attendu » : petit repère (lecture seule) basé sur l'ancien index + la consommation habituelle du compteur
+   (historique 2026, sinon archive 2025). Ne modifie ni la saisie, ni les données, ni la mise en page (puce flottante, sans clic). */
+(function(){
+  'use strict';
+  var KEY='smartrv_expected_on', chip=null;
+  function on(){ try{ return localStorage.getItem(KEY)!=='0'; }catch(_){ return true; } }
+  function median(a){ var s=a.slice().sort(function(x,y){return x-y;}),n=s.length; return n%2?s[(n-1)/2]:(s[n/2-1]+s[n/2])/2; }
+  function expected(m){
+    if(!m||m.type!=='EAU'||!window.SRPSmart) return null;
+    var p=Number(m.prev); if(m.prev===''||m.prev==null||!isFinite(p)) return null;
+    var v=window.SRPSmart.recent(m); if(!v||v.length<2) return null;
+    var base=median(v), lo=Math.min.apply(null,v), hi=Math.max.apply(null,v);
+    return {idx:Math.round(p+base),lo:Math.round(p+lo),hi:Math.round(p+hi),base:base,src:v.src||'',n:v.length};
+  }
+  function mk(){
+    if(chip) return chip;
+    chip=document.createElement('div'); chip.id='srpExpectedChip'; chip.setAttribute('aria-hidden','true');
+    chip.style.cssText='position:fixed;z-index:55;pointer-events:none;display:none;font:700 11px/1.3 system-ui,sans-serif;color:#475569;background:rgba(241,245,249,.95);border:1px solid #cbd5e1;border-radius:999px;padding:1px 9px;white-space:nowrap;transform:translateX(-50%)';
+    document.body.appendChild(chip); return chip;
+  }
+  function tick(){
+    try{
+      var c=mk(), page=document.getElementById('entryPage'), inp=document.getElementById('newIndexInput');
+      if(!on()||!page||page.classList.contains('hidden')||!inp||inp.offsetParent===null){ c.style.display='none'; return; }
+      var m=(typeof filteredMeters!=='undefined'&&filteredMeters)?filteredMeters[currentIndex]:null;
+      var typed=String(inp.value||'').trim()!=='';
+      var isRead=m&&m.current!==''&&m.current!=null;
+      var e=(m&&!typed&&!isRead)?expected(m):null;
+      if(!e){ c.style.display='none'; return; }
+      var r=inp.getBoundingClientRect(); if(!r.width||r.top<40){ c.style.display='none'; return; }
+      c.textContent='Index attendu : '+e.idx;
+      c.style.left=(r.left+r.width/2)+'px'; c.style.top=Math.max(0,r.top-20)+'px'; c.style.display='block';
+    }catch(_){ if(chip) chip.style.display='none'; }
+  }
+  window.SRPExpected={expected:expected,on:on,setOn:function(v){ try{ localStorage.setItem(KEY,v?'1':'0'); }catch(_){} tick(); }};
+  function init(){ setInterval(tick,400); setTimeout(tick,800); }
+  if(document.readyState==='loading') document.addEventListener('DOMContentLoaded',init); else init();
 })();
 </script>
 </body>

@@ -1,0 +1,33 @@
+name: Test export Excel
+on:
+  workflow_dispatch:
+  push:
+    branches: [feat/smart-import]
+    paths: ['index.html','tests/**','.github/workflows/test-export.yml']
+permissions:
+  contents: write
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 20 }
+      - run: npm install --no-save xlsx-js-style@1.2.0 jszip@3.10.1
+      - run: node tests/export_test.js
+      - name: Aperçu visuel (LibreOffice)
+        continue-on-error: true
+        run: |
+          sudo apt-get update -qq && sudo apt-get install -y -qq libreoffice-calc poppler-utils >/dev/null
+          soffice --headless --convert-to pdf export-test.xlsx >/dev/null 2>&1
+          pdftoppm -r 80 -png -f 1 -l 3 export-test.pdf preview
+          mkdir -p /tmp/pv && cp export-test.xlsx preview*.png /tmp/pv/ && ls -la /tmp/pv
+      - name: Publier l'aperçu (branche ci-preview)
+        continue-on-error: true
+        run: |
+          cd /tmp/pv && git init -q && git checkout -q -b ci-preview
+          git config user.email ci@example.com && git config user.name ci
+          git add -A && git commit -q -m "preview"
+          git push -q -f "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git" ci-preview
+      - uses: actions/upload-artifact@v4
+        with: { name: export-test, path: export-test.xlsx }
