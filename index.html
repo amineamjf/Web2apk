@@ -12178,7 +12178,7 @@ html body.v176-hide-prev.v176-hide-prev #entryPage .entry-previous-box{display:n
    Bouton « Vérifier les mises à jour » dans le menu de la tournée. */
 (function(){
   var busy=false;
-  var BUILD_CODE='V419-VOIR-SERVEUR-2026-11-22'; // change ce texte à chaque nouvelle version envoyée, pour vérifier visuellement qu'elle est bien chargée
+  var BUILD_CODE='V420-VIDEO-NATIVE-2026-11-22'; // change ce texte à chaque nouvelle version envoyée, pour vérifier visuellement qu'elle est bien chargée
   function say(m,t){ try{ showToast(m,t||'info'); }catch(_){ } }
   window.v210CheckUpdate=function(){
     if(busy) return;
@@ -12852,6 +12852,36 @@ html body #entryPage #cameraPhotoBadge{top:-6px!important;right:-6px!important}
   window.v224SendVideo=function(m){
     if(!m){ m=Array.isArray(filteredMeters)?filteredMeters[currentIndex]:null; }
     if(!m) return toast('Aucun compteur sélectionné.');
+    // V420 — chemin NATIF (APK) : la Caméra enregistre directement dans Films/SmartRV puis feuille de partage
+    // (WhatsApp…) avec le fichier. Rien n'est chargé en mémoire : plus de limite de 20 Mo ni de plantage.
+    // En cas d'indisponibilité (navigateur, ancien Android), on retombe sur l'ancienne méthode ci-dessous.
+    try{
+      var _C=window.Capacitor, _saver=null;
+      if(_C && typeof _C.isNativePlatform==='function' && _C.isNativePlatform()){
+        _saver=(_C.Plugins&&_C.Plugins.SaveFile)||(typeof _C.registerPlugin==='function'?_C.registerPlugin('SaveFile'):null);
+      }
+      if(_saver && typeof _saver.recordVideo==='function'){
+        try{ persistCurrentMeter(m); }catch(_){}
+        try{ localStorage.setItem('smartrv_video_pending',String(Date.now())); }catch(_){}
+        var _clr=function(){ try{ localStorage.removeItem('smartrv_video_pending'); }catch(_){} };
+        _saver.recordVideo({name:String(m.meter||'compteur'),maxSeconds:30}).then(function(info){
+          _clr();
+          toast('Vidéo enregistrée (Films/SmartRV).','success');
+          return _saver.shareFile({uri:info.uri,mime:info.mime||'video/mp4',name:info.name,text:getMeterReportShareText(m)}).catch(function(){
+            toast('Vidéo enregistrée dans Films/SmartRV : partagez-la depuis la galerie.','warn');
+          });
+        }).catch(function(err){
+          _clr();
+          var msg=String((err&&(err.message||err))||'');
+          if(/cancel/i.test(msg)) return;
+          if(/unsupported|UNIMPLEMENTED|not implemented/i.test(msg)){ legacy(); return; }
+          toast('Enregistrement vidéo impossible : '+msg,'error');
+        });
+        return;
+      }
+    }catch(_){}
+    legacy();
+    function legacy(){
     var inp=document.createElement('input');
     inp.type='file'; inp.accept='video/*'; try{inp.setAttribute('capture','environment');}catch(_){}
     inp.style.display='none';
@@ -12894,6 +12924,7 @@ html body #entryPage #cameraPhotoBadge{top:-6px!important;right:-6px!important}
       }
     };
     inp.click();
+    }
   };
 
   // Une fois la photo capturée (déclenchée depuis l'icône du rapport), on enchaîne directement

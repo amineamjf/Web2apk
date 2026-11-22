@@ -18,7 +18,12 @@ import com.getcapacitor.JSObject;
 import com.getcapacitor.Plugin;
 import com.getcapacitor.PluginCall;
 import com.getcapacitor.PluginMethod;
+import com.getcapacitor.annotation.ActivityCallback;
 import com.getcapacitor.annotation.CapacitorPlugin;
+
+import androidx.activity.result.ActivityResult;
+import android.app.Activity;
+import android.content.res.AssetFileDescriptor;
 
 import java.io.OutputStream;
 
@@ -180,6 +185,8 @@ public class SaveFilePlugin extends Plugin {
             send.setType(mime);
             send.putExtra(Intent.EXTRA_STREAM, uri);
             if (name != null && !name.isEmpty()) send.putExtra(Intent.EXTRA_SUBJECT, name);
+            String text = call.getString("text");
+            if (text != null && !text.isEmpty()) send.putExtra(Intent.EXTRA_TEXT, text);
             send.setClipData(ClipData.newRawUri("", uri));
             send.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
 
@@ -190,6 +197,91 @@ public class SaveFilePlugin extends Plugin {
         } catch (Exception e) {
             call.reject("share failed: " + e.getMessage());
         }
+    }
+
+
+    /**
+     * V420 — Enregistre une vidéo avec l'appli Caméra du téléphone ; le fichier est écrit directement
+     * dans Films/SmartRV (jamais chargé en mémoire dans la page). Renvoie {uri,mime,name,size}.
+     * Durée max 30 s et taille max ~60 Mo (respectées par la plupart des applis Caméra).
+     */
+    @PluginMethod
+    public void recordVideo(PluginCall call) {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) {
+            call.reject("unsupported");
+            return;
+        }
+        Uri target = null;
+        try {
+            String base = call.getString("name", "video");
+            base = base.replaceAll("[^A-Za-z0-9_-]", "_");
+            String name = "Video_" + base + "_" + System.currentTimeMillis() + ".mp4";
+            ContentValues values = new ContentValues();
+            values.put(MediaStore.MediaColumns.DISPLAY_NAME, name);
+            values.put(MediaStore.MediaColumns.MIME_TYPE, "video/mp4");
+            values.put(MediaStore.MediaColumns.RELATIVE_PATH, Environment.DIRECTORY_MOVIES + "/" + SUB_DIR);
+            target = getContext().getContentResolver().insert(MediaStore.Video.Media.EXTERNAL_CONTENT_URI, values);
+            if (target == null) {
+                call.reject("insert failed");
+                return;
+            }
+            Intent i = new Intent(MediaStore.ACTION_VIDEO_CAPTURE);
+            i.putExtra(MediaStore.EXTRA_OUTPUT, target);
+            i.putExtra(MediaStore.EXTRA_DURATION_LIMIT, call.getInt("maxSeconds", 30));
+            i.putExtra(MediaStore.EXTRA_SIZE_LIMIT, 60L * 1024L * 1024L);
+            i.setClipData(ClipData.newRawUri("", target));
+            i.addFlags(Intent.FLAG_GRANT_WRITE_URI_PERMISSION | Intent.FLAG_GRANT_READ_URI_PERMISSION);
+            call.getData().put("_uri", target.toString());
+            call.getData().put("_name", name);
+            startActivityForResult(call, i, "videoResult");
+        } catch (Exception e) {
+            if (target != null) {
+                try { getContext().getContentResolver().delete(target, null, null); } catch (Exception ignored) { }
+            }
+            call.reject("record failed: " + e.getMessage());
+        }
+    }
+
+    @ActivityCallback
+    private void videoResult(PluginCall call, ActivityResult result) {
+        if (call == null) return;
+        ContentResolver resolver = getContext().getContentResolver();
+        String uriStr = call.getData().optString("_uri", "");
+        String name = call.getData().optString("_name", "video.mp4");
+        Uri uri = uriStr.isEmpty() ? null : Uri.parse(uriStr);
+        long size = 0;
+        try {
+            if (result != null && result.getResultCode() == Activity.RESULT_OK && uri != null) {
+                try (AssetFileDescriptor fd = resolver.openAssetFileDescriptor(uri, "r")) {
+                    if (fd != null) size = fd.getLength();
+                }
+                // Certaines applis Caméra ignorent EXTRA_OUTPUT et renvoient leur propre fichier.
+                if (size <= 0 && result.getData() != null && result.getData().getData() != null) {
+                    Uri alt = result.getData().getData();
+                    try (AssetFileDescriptor fd2 = resolver.openAssetFileDescriptor(alt, "r")) {
+                        if (fd2 != null) size = fd2.getLength();
+                    }
+                    if (size > 0) {
+                        try { resolver.delete(uri, null, null); } catch (Exception ignored) { }
+                        uri = alt;
+                    }
+                }
+            }
+        } catch (Exception ignored) { }
+        if (size <= 0) {
+            // annulé ou fichier vide : on ne laisse pas d'entrée vide dans la galerie
+            if (!uriStr.isEmpty()) {
+                try { resolver.delete(Uri.parse(uriStr), null, null); } catch (Exception ignored) { }
+            }
+            call.reject("cancelled");
+            return;
+        }
+        JSObject res = new JSObject();
+        res.put("uri", uri.toString());
+        res.put("mime", "video/mp4");
+        res.put("name", name);
+        res.put("size", size);
+        call.resolve(res);
     }
 
     @PluginMethod
