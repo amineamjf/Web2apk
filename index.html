@@ -7482,18 +7482,19 @@
                     'Photo': m.photo ? `Photo_${String(m.meter || i + 1).replace(/[^a-zA-Z0-9_-]/g, '_')}.${String(m.photo).match(/^data:image\/([^;]+)/)?.[1]?.toLowerCase() === 'png' ? 'png' : 'jpg'}` : '',
                     'Ajouté': m.added === true ? 'Oui' : 'Non',
                     'Réordonné': m.reordered === true ? 'Oui' : 'Non',
-                    'Saisi par': m.enteredBy || ''
+                    'Saisi par': m.enteredBy || '',
+                    'Ancien N° Compteur': m.replacedFrom || ''
                 };
             });
 
             const wb = XLSX.utils.book_new();
             const ws = XLSX.utils.json_to_sheet(rows.length ? rows : [{
                 'N°':'','Type':'','N° Client / Contrat':'','N° Compteur':'','Tournée':'','Client':'','Adresse':'',
-                'Ancien Index':'','Nouvel Index':'','Consommation':'','État':'','Anomalie':'','Annotation':'','Date/Heure Relevé':'','GPS':'','Photo':'','Ajouté':'','Réordonné':'','Saisi par':''
+                'Ancien Index':'','Nouvel Index':'','Consommation':'','État':'','Anomalie':'','Annotation':'','Date/Heure Relevé':'','GPS':'','Photo':'','Ajouté':'','Réordonné':'','Saisi par':'','Ancien N° Compteur':''
             }]);
 
             const headers = ['N°','Type','N° Client / Contrat','N° Compteur','Tournée','Client','Adresse',
-                             'Ancien Index','Nouvel Index','Consommation','État','Anomalie','Annotation','Date/Heure Relevé','GPS','Photo','Ajouté','Réordonné','Saisi par'];
+                             'Ancien Index','Nouvel Index','Consommation','État','Anomalie','Annotation','Date/Heure Relevé','GPS','Photo','Ajouté','Réordonné','Saisi par','Ancien N° Compteur'];
             const range = XLSX.utils.decode_range(ws['!ref']);
             const border = {
                 top:{style:'thin',color:{rgb:'B7C3D0'}},
@@ -7506,7 +7507,7 @@
             ws['!autofilter'] = {ref:XLSX.utils.encode_range(range)};
             ws['!cols'] = [
                 {wch:6},{wch:10},{wch:22},{wch:20},{wch:14},{wch:30},{wch:44},
-                {wch:15},{wch:15},{wch:17},{wch:26},{wch:30},{wch:28},{wch:20},{wch:26},{wch:20},{wch:12},{wch:16}
+                {wch:15},{wch:15},{wch:17},{wch:26},{wch:30},{wch:28},{wch:20},{wch:26},{wch:20},{wch:12},{wch:16},{wch:20}
             ];
             ws['!rows'] = [{hpt:30}];
 
