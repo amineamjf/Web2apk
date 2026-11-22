@@ -292,11 +292,13 @@
       + '<button id="cvNow" type="button" style="grid-column:1/3;border:0;border-radius:12px;padding:12px 8px;background:#1d4ed8;color:#fff;font-weight:800;font-size:13px">☁️ Synchroniser maintenant</button>'
       + '<button id="cvRestore" type="button" style="border:0;border-radius:12px;padding:11px 8px;background:#fee2e2;color:#991b1b;font-weight:800;font-size:12px">⬇️ Restaurer du cloud</button>'
       + '<button id="cvCode" type="button" style="border:0;border-radius:12px;padding:11px 8px;background:#f1f5f9;color:#334155;font-weight:800;font-size:12px">🔑 J’ai déjà un code</button>'
+      + '<button id="cvView" type="button" style="grid-column:1/3;border:0;border-radius:12px;padding:11px 8px;background:#ecfdf5;color:#065f46;font-weight:800;font-size:13px">🔍 Voir ce qui est sur le serveur</button>'
       + '<button id="cvClose" type="button" style="grid-column:1/3;border:0;border-radius:12px;padding:11px 8px;background:#f1f5f9;color:#334155;font-weight:800;font-size:13px">Fermer</button></div></div>';
     document.body.appendChild(md);
     function close() { lset(K.seen, '1'); S.render = null; md.remove(); }
     md.addEventListener('click', function (e) { if (e.target === md) close(); });
     $('cvClose').onclick = close;
+    $('cvView').onclick = function () { viewServer(); };
     $('cvCopy').onclick = function () {
       var ok = copyText(getKey());
       toast(ok ? 'Code copié.' : 'Copie impossible : recopiez le code à la main.', ok ? 'success' : 'warn');
@@ -349,6 +351,91 @@
       refresh();
     };
     S.render();
+  }
+
+
+  /* ---------- V419 : voir le contenu du serveur (lecture seule) ---------- */
+  function esc(v) { return String(v == null ? '' : v).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }
+  function viewServer() {
+    var old = $('srpCloudView'); if (old) old.remove();
+    var md = document.createElement('div'); md.id = 'srpCloudView';
+    md.style.cssText = 'position:fixed;inset:0;background:rgba(3,12,24,.75);z-index:10100;display:flex;align-items:flex-end;justify-content:center';
+    md.innerHTML = '<div style="width:100%;max-width:480px;max-height:94vh;display:flex;flex-direction:column;background:#fff;border-radius:18px 18px 0 0;overflow:hidden">'
+      + '<div style="padding:14px 16px;background:linear-gradient(135deg,#064e3b,#059669);color:#fff"><div style="font-weight:900;font-size:15px">🔍 Contenu du serveur</div>'
+      + '<div style="font-size:11px;opacity:.92;margin-top:3px">Lecture seule : rien n’est modifié ni supprimé.</div></div>'
+      + '<div id="cvvBody" style="padding:12px 14px;overflow:auto;flex:1;font-size:12px;color:#0f172a">⏳ Connexion au serveur…</div>'
+      + '<div style="padding:8px 14px 14px;border-top:1px solid #f1f5f9"><button id="cvvClose" type="button" style="width:100%;border:0;border-radius:12px;padding:11px;background:#f1f5f9;color:#334155;font-weight:800;font-size:13px">Fermer</button></div></div>';
+    document.body.appendChild(md);
+    md.addEventListener('click', function (e) { if (e.target === md) md.remove(); });
+    $('cvvClose').onclick = function () { md.remove(); };
+    var body = $('cvvBody');
+    function fmt(d) { try { return new Date(d).toLocaleString('fr-FR'); } catch (_) { return d || '—'; } }
+    (async function () {
+      try {
+        var info = await withRetry(function () { return api('GET', 'op=info'); });
+        var html = '<div style="font-weight:800;margin-bottom:6px">Copies enregistrées (2 emplacements A/B)</div>';
+        var list = [];
+        ['A', 'B'].forEach(function (sl) {
+          var m = info && info[sl];
+          if (!m || (!m.savedAt && !m.partial)) { html += '<div style="padding:9px;border-radius:10px;background:#f8fafc;margin-bottom:6px">Emplacement ' + sl + ' : vide</div>'; return; }
+          if (m.partial) { html += '<div style="padding:9px;border-radius:10px;background:#fffbeb;margin-bottom:6px">Emplacement ' + sl + ' : envoi en cours / interrompu</div>'; return; }
+          m.slot = sl; list.push(m);
+          html += '<div style="padding:9px;border-radius:10px;background:#f0fdf4;margin-bottom:6px;line-height:1.5"><b>Emplacement ' + sl + '</b> · ' + esc(fmt(m.savedAt)) + '<br>' + esc(m.meters) + ' compteurs · ' + (Number(m.bytes || 0) / 1048576).toFixed(1) + ' Mo · ' + esc(m.parts) + ' morceaux</div>';
+        });
+        if (!list.length) { body.innerHTML = html + '<div style="margin-top:8px">Aucune copie sur le serveur pour ce code.</div>'; return; }
+        list.sort(function (x, y) { return x.savedAt < y.savedAt ? 1 : -1; });
+        html += '<button id="cvvLoad" type="button" style="width:100%;margin-top:6px;border:0;border-radius:12px;padding:12px;background:#059669;color:#fff;font-weight:800;font-size:13px">📥 Afficher le contenu de la copie la plus récente</button>'
+          + '<div style="color:#64748b;margin-top:6px;line-height:1.4">Télécharge la copie (peut prendre un moment si elle contient des photos) pour la parcourir ici. Votre téléphone n’est pas modifié.</div>';
+        body.innerHTML = html;
+        $('cvvLoad').onclick = async function () {
+          var bt = $('cvvLoad'); bt.disabled = true; bt.textContent = '⏳ Téléchargement…';
+          try {
+            var data = await assemble(list[0]);
+            showContent(data, list[0]);
+          } catch (e) { bt.disabled = false; bt.textContent = '📥 Réessayer'; toast(String((e && e.message) || e), 'error'); }
+        };
+      } catch (e) { body.innerHTML = '<div style="color:#b91c1c;font-weight:700">⚠️ ' + esc((e && e.message) || e) + '</div>'; }
+    })();
+    function showContent(data, man) {
+      var ms = data.meters || [], read = 0, anom = 0, photos = 0, tours = {};
+      ms.forEach(function (m) {
+        if (m.current !== '' && m.current != null) read++;
+        if (m.anomaly && m.anomaly !== 'RAS') anom++;
+        if (m.photo) photos++;
+        var t = m.tour || '—'; tours[t] = (tours[t] || 0) + 1;
+      });
+      var tl = Object.keys(tours).sort().map(function (t) { return esc(t) + ' : <b>' + tours[t] + '</b>'; }).join('<br>');
+      body.innerHTML = '<div style="padding:10px;border-radius:12px;background:#f0fdf4;line-height:1.6">'
+        + '📅 Copie du <b>' + esc(fmt(man.savedAt)) + '</b> (emplacement ' + esc(man.slot) + ')<br>'
+        + '🔢 Compteurs : <b>' + ms.length + '</b><br>✅ Relevés (index saisi) : <b>' + read + '</b> · ⬜ Non relevés : <b>' + (ms.length - read) + '</b><br>'
+        + '⚠️ Avec anomalie : <b>' + anom + '</b><br>📷 Avec photo : <b>' + photos + '</b></div>'
+        + '<div style="margin-top:8px;padding:10px;border-radius:12px;background:#f8fafc;line-height:1.6"><b>Par tournée</b><br>' + tl + '</div>'
+        + '<input id="cvvQ" type="search" placeholder="Chercher un compteur / client / contrat…" style="width:100%;box-sizing:border-box;margin-top:10px;border:2px solid #cbd5e1;border-radius:10px;padding:10px;font-size:14px">'
+        + '<div id="cvvRes" style="margin-top:6px"></div>'
+        + '<button id="cvvDl" type="button" style="width:100%;margin-top:10px;border:0;border-radius:12px;padding:11px;background:#e0e7ff;color:#1e3a8a;font-weight:800;font-size:13px">💾 Enregistrer cette copie du serveur (fichier JSON)</button>';
+      var q = $('cvvQ'), res = $('cvvRes');
+      function run() {
+        var v = String(q.value || '').trim().toLowerCase(); if (v.length < 2) { res.innerHTML = '<div style="color:#64748b">Tapez au moins 2 caractères.</div>'; return; }
+        var out = [], n = 0;
+        for (var i = 0; i < ms.length && n < 30; i++) {
+          var m = ms[i];
+          if ((String(m.meter || '') + ' ' + String(m.name || '') + ' ' + String(m.contract || '')).toLowerCase().indexOf(v) > -1) {
+            n++;
+            out.push('<div style="padding:8px;border-radius:10px;background:#f8fafc;margin-bottom:5px;line-height:1.45"><b>' + esc(m.meter) + '</b> · ' + esc(m.name) + '<br>Tournée ' + esc(m.tour || '—') + ' · Ancien : <b>' + esc(m.prev == null ? '' : m.prev) + '</b> → Nouveau : <b>' + esc(m.current == null || m.current === '' ? '—' : m.current) + '</b>'
+              + (m.anomaly && m.anomaly !== 'RAS' ? '<br>⚠️ ' + esc(m.anomaly) : '') + (m.photo ? ' 📷' : '') + '</div>');
+          }
+        }
+        res.innerHTML = out.length ? out.join('') : '<div style="color:#64748b">Aucun résultat.</div>';
+      }
+      q.oninput = run; run();
+      $('cvvDl').onclick = function () {
+        try {
+          var blob = new Blob([JSON.stringify(data)], { type: 'application/json' }), name = 'SmartRV_serveur_' + new Date(man.savedAt).toISOString().slice(0, 10) + '.json';
+          if (typeof window.downloadBlobAsFile === 'function') window.downloadBlobAsFile(blob, name);
+          else { var a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = name; document.body.appendChild(a); a.click(); a.remove(); }
+        } catch (e) { toast('Enregistrement impossible.', 'error'); }
+      };
+    }
   }
 
   function injectMenu() {
