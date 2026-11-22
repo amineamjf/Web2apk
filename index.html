@@ -7430,6 +7430,22 @@
             printMetersInvoices(list, 'Factures_Selection');
         }
 
+        /* V418 — Codes d'anomalie à l'export : on écrit le libellé COMPLET avec son code (ex. « 91-COMPTEUR NON ACCESSIBLE »)
+           tel que défini dans la liste Anomalie de l'app. « 03-LOCAL INHABITE » va dans la colonne Annotation. */
+        function v418AnomLabel(v){
+            const val = String(v || 'RAS');
+            if (val === 'RAS') return 'RAS';
+            try {
+                const sel = document.getElementById('anomalySelect');
+                if (sel) { for (const o of sel.options) { if (o.value === val) return String(o.textContent || '').trim() || val; } }
+            } catch (_) {}
+            return val;
+        }
+        function v418Split(m){
+            const an = String(m.anomaly || 'RAS');
+            if (an === 'INHABITE') return { anomalie: 'RAS', annotation: v418AnomLabel('INHABITE') };
+            return { anomalie: v418AnomLabel(an), annotation: m.annotation || 'Aucune' };
+        }
         function buildExportWorkbook() {
             const exportList = v231ExportOrdered(); // ordre ORIGINAL Excel, même si les lus sont regroupés en avant
             const rows = exportList.map((m, i) => {
@@ -7459,8 +7475,8 @@
                     'Nouvel Index': m.current ?? '',
                     'Consommation': v177V(conso),
                     'État': etat,
-                    'Anomalie': m.anomaly || 'RAS',
-                    'Annotation': m.annotation || 'Aucune',
+                    'Anomalie': v418Split(m).anomalie,
+                    'Annotation': v418Split(m).annotation,
                     'Date/Heure Relevé': readAtLabel,
                     'GPS': m.gps || '',
                     'Photo': m.photo ? `Photo_${String(m.meter || i + 1).replace(/[^a-zA-Z0-9_-]/g, '_')}.${String(m.photo).match(/^data:image\/([^;]+)/)?.[1]?.toLowerCase() === 'png' ? 'png' : 'jpg'}` : '',
@@ -12162,7 +12178,7 @@ html body.v176-hide-prev.v176-hide-prev #entryPage .entry-previous-box{display:n
    Bouton « Vérifier les mises à jour » dans le menu de la tournée. */
 (function(){
   var busy=false;
-  var BUILD_CODE='V417-ANCIEN-PORTRAIT-2026-11-21'; // change ce texte à chaque nouvelle version envoyée, pour vérifier visuellement qu'elle est bien chargée
+  var BUILD_CODE='V418-CODES-ANOMALIE-2026-11-22'; // change ce texte à chaque nouvelle version envoyée, pour vérifier visuellement qu'elle est bien chargée
   function say(m,t){ try{ showToast(m,t||'info'); }catch(_){ } }
   window.v210CheckUpdate=function(){
     if(busy) return;
