@@ -12194,7 +12194,7 @@ html body.v176-hide-prev.v176-hide-prev #entryPage .entry-previous-box{display:n
    Bouton « Vérifier les mises à jour » dans le menu de la tournée. */
 (function(){
   var busy=false;
-  var BUILD_CODE='V421-FIXES-2026-11-23'; // change ce texte à chaque nouvelle version envoyée, pour vérifier visuellement qu'elle est bien chargée
+  var BUILD_CODE='V422-HISTO-AUTO-2026-11-23'; // change ce texte à chaque nouvelle version envoyée, pour vérifier visuellement qu'elle est bien chargée
   function say(m,t){ try{ showToast(m,t||'info'); }catch(_){ } }
   window.v210CheckUpdate=function(){
     if(busy) return;
@@ -16818,7 +16818,8 @@ if(document.readyState==='complete') setTimeout(init,0); else window.addEventLis
       +'<label style="display:flex;gap:10px;align-items:center;font-weight:700;margin-bottom:12px"><input id="ssExpected" type="checkbox" '+((window.SRPExpected&&!SRPExpected.on())?'':'checked')+' style="width:20px;height:20px"> Afficher l’« index attendu » (saisie)</label>'
       +'<label style="font-size:13px;font-weight:700">Alerte si la conso est au moins … fois la conso habituelle</label><input id="ssFactor" type="number" step="0.1" min="1" value="'+s.factor+'" style="'+inp+'">'
       +'<label style="font-size:13px;font-weight:700">…mais jamais en dessous de (m³)</label><input id="ssMin" type="number" step="1" min="0" value="'+s.minM3+'" style="'+inp+'">'
-      +'<label style="font-size:13px;font-weight:700">Mois d’historique utilisés (0 = tout l’historique du compteur)</label><input id="ssWin" type="number" step="1" min="0" max="36" value="'+s.win+'" style="'+inp+'">'
+      +'<label style="display:flex;gap:10px;align-items:center;font-weight:700;margin-bottom:8px"><input id="ssAll" type="checkbox" '+(s.win>0?'':'checked')+' style="width:20px;height:20px"> Utiliser TOUT l’historique de chaque compteur (automatique)</label>'
+      +'<div id="ssWinBox" style="'+(s.win>0?'':'display:none')+'"><label style="font-size:13px;font-weight:700">Limiter aux … derniers mois seulement</label><input id="ssWin" type="number" step="1" min="1" max="36" value="'+(s.win>0?s.win:12)+'" style="'+inp+'"></div>'
       +'<label style="font-size:13px;font-weight:700">Seuil fixe (m³) — vide ou 0 = désactivé</label><input id="ssFixed" type="number" step="1" min="0" value="'+(s.fixed>0?s.fixed:'')+'" style="'+inp+'">'
       +'<div id="ssDiag" style="font-size:12px;line-height:1.5;background:#f1f5f9;color:#0f172a;border-radius:10px;padding:9px;margin-bottom:12px"></div>'
       +'<div style="font-size:12px;color:#64748b;margin-bottom:12px">Exemple : habituel 6, 3, 4 m³ (médiane 4). Avec ×2 et minimum 8 → alerte à partir de 8 m³. Sans historique (moins de 2 mois), seul le seuil fixe s’applique. Électricité : seuil inchangé.</div>'
@@ -16846,9 +16847,10 @@ if(document.readyState==='complete') setTimeout(init,0); else window.addEventLis
     md.addEventListener('click',function(e){ if(e.target===md) close(); });
     $('ssClose').onclick=close;
     $('ssReset').onclick=function(){ SRPSmart.reset(); close(); refreshAll(); toast('Réglages par défaut rétablis.','success'); };
+    $('ssAll').onchange=function(){ $('ssWinBox').style.display=$('ssAll').checked?'none':'block'; };
     $('ssSave').onclick=function(){
-      var f=Number($('ssFactor').value), mn=Number($('ssMin').value), w=Math.round(Number($('ssWin').value)), fx=Number($('ssFixed').value);
-      SRPSmart.set({smart:$('ssSmart').checked,factor:(isFinite(f)&&f>=1)?f:2,minM3:(isFinite(mn)&&mn>=0)?mn:8,win:(isFinite(w)&&w>=0&&w<=36)?w:0,fixed:(isFinite(fx)&&fx>0)?fx:0});
+      var f=Number($('ssFactor').value), mn=Number($('ssMin').value), w=$('ssAll').checked?0:Math.round(Number($('ssWin').value)), fx=Number($('ssFixed').value);
+      SRPSmart.set({smart:$('ssSmart').checked,factor:(isFinite(f)&&f>=1)?f:2,minM3:(isFinite(mn)&&mn>=0)?mn:8,win:(isFinite(w)&&w>=1&&w<=36)?w:0,fixed:(isFinite(fx)&&fx>0)?fx:0});
       try{ if(window.SRPExpected&&$('ssExpected')) SRPExpected.setOn($('ssExpected').checked); }catch(_){}
       close(); refreshAll(); toast('Alertes intelligentes enregistrées.','success');
     };
