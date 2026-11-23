@@ -21,9 +21,9 @@
     (function(){
       'use strict';
       var KEY='SmartRV_SmartAlerts';
-      var DEF={smart:true,fixed:25,factor:2,minM3:8,win:4,minHist:2};
+      var DEF={smart:true,fixed:25,factor:2,minM3:8,win:0,minHist:2};  /* V421 : win 0 = TOUT l'historique disponible (2026 + archive) */
       var MONTHS=['Janvier','Février','Mars','Avril','Mai','Juin','Juillet','Août','Septembre','Octobre','Novembre','Décembre'];
-      function load(){ var o=null; try{ o=JSON.parse(localStorage.getItem(KEY)||'null'); }catch(_){} var s={}; for(var k in DEF){ s[k]=(o&&typeof o[k]===typeof DEF[k])?o[k]:DEF[k]; } return s; }
+      function load(){ var o=null; try{ o=JSON.parse(localStorage.getItem(KEY)||'null'); }catch(_){} var s={}; for(var k in DEF){ s[k]=(o&&typeof o[k]===typeof DEF[k])?o[k]:DEF[k]; } if(s.win===4) s.win=0; /* V421 : ancien réglage par défaut (4 mois) → tout l'historique */ return s; }
       var S=load();
       function save(){ try{ localStorage.setItem(KEY,JSON.stringify(S)); }catch(_){} }
       function mod(n){ return ((n%12)+12)%12; }
@@ -38,17 +38,25 @@
         if(isFinite(prev)) for(var d=1;d<=12;d++){ if(raw(cur-d)===prev){ end=mod(cur-d); break; } }
         if(end<0) end=mod(cur-1);
         function ix(k){ var v=raw(k); if(v===null && mod(k)===end && isFinite(prev)) return prev; return v; }
-        var vals=[];
-        for(var i=0;i<S.win;i++){ var a=ix(end-i), b=ix(end-i-1); if(a===null||b===null) break; var c=a-b; if(c<0) break; vals.unshift(c); }
+        var vals=[], LIM=(S.win>0&&S.win<11)?S.win:11;   /* V421 : jusqu'à 11 consommations de l'année en cours */
+        for(var i=0;i<LIM;i++){ var a=ix(end-i), b=ix(end-i-1); if(a===null||b===null) break; var c=a-b; if(c<0) break; vals.unshift(c); }
         return vals;
       }
-      /* V414 : repli — si le compteur a moins de minHist consommations 2026 exploitables, on utilise sa conso mensuelle de l'archive 2025 (window.SRP_ARCHIVE). */
+      /* V414/V421 : historique COMPLET du compteur = archive (2024-2025) + 2026 (jusqu'à 11 mois), du plus ancien au plus récent.
+         Chaque compteur utilise tout ce qu'il possède (été ET hiver) ; réglage « mois utilisés » > 0 = ne garder que les N derniers. */
+      function archiveOf(m){
+        try{ var A=window.SRP_ARCHIVE&&window.SRP_ARCHIVE.m&&window.SRP_ARCHIVE.m[String(m&&m.meter||'')]; return Array.isArray(A)?A.filter(function(x){return typeof x==='number'&&isFinite(x)&&x>=0;}):[]; }catch(_){ return []; }
+      }
       function recent(m){
-        var v=recentRaw(m);
-        if(v.length<S.minHist){
-          try{ var A=window.SRP_ARCHIVE&&window.SRP_ARCHIVE.m&&window.SRP_ARCHIVE.m[String(m&&m.meter||'')];
-            if(Array.isArray(A)&&A.length>=S.minHist){ v=A.slice(-S.win); v.src='archive'; } }catch(_){}
-        }
+        var cur=recentRaw(m), A=archiveOf(m), v=A.concat(cur);
+        if(S.win>0) v=v.slice(-S.win);
+        v.src=A.length?(cur.length?'mix':'archive'):'';
+        return v;
+      }
+      /* ancien comportement (4 derniers mois, archive en secours) — utilisé par « Index attendu » (précision à court terme) */
+      function recentShort(m){
+        var v=recentRaw(m); if(v.length>4) v=v.slice(-4);
+        if(v.length<S.minHist){ var A=archiveOf(m); if(A.length>=S.minHist){ v=A.slice(-4); v.src='archive'; } }
         return v;
       }
       function ev(m,c){
@@ -63,12 +71,12 @@
       function why(m,c){
         var r=ev(m,c); if(!r) return '';
         if(r.kind==='fixed') return 'Au-dessus du seuil fixe ('+fmt(S.fixed)+' m³).';
-        var t='Habituellement ~ '+fmt(r.base)+' m³/mois ('+(r.src==='archive'?'archive 2025 : ':'derniers mois : ')+r.vals.map(fmt).join(', ')+')';
+        var t='Habituellement ~ '+fmt(r.base)+' m³/mois ('+(r.src==='archive'?'archive 2025 : ':(r.src==='mix'?'tout l’historique : ':'derniers mois : '))+r.vals.map(fmt).join(', ')+')';
         if(r.base>0) t+=' — ce relevé = ×'+fmt(c/r.base);
         return t+'.';
       }
       window.SRPSmart={
-        high:function(m,c){ return !!ev(m,c); }, why:why, recent:recent, eval:ev,
+        high:function(m,c){ return !!ev(m,c); }, why:why, recent:recent, recentShort:recentShort, eval:ev,
         get:function(){ return Object.assign({},S); },
         set:function(o){ for(var k in DEF){ if(o&&o[k]!==undefined) S[k]=o[k]; } save(); },
         reset:function(){ S=Object.assign({},DEF); save(); }, defaults:DEF, fmt:fmt, MONTHS:MONTHS
@@ -11708,10 +11716,16 @@ html body .fixed-nav-bar #navRecordsBadge,html body .fixed-nav-bar #navControlBa
   function enabled(){try{return localStorage.getItem(KEY)==='1';}catch(_){return false;}}
   function busy(){var b=document.getElementById('busyOverlay');return b&&!b.classList.contains('hidden');}
   function stop(e){e.preventDefault();e.stopPropagation();}
+  function nativeBO(on){
+    try{ var C=window.Capacitor; if(!C||typeof C.isNativePlatform!=='function'||!C.isNativePlatform()) return;
+      var sv=(C.Plugins&&C.Plugins.SaveFile)||(typeof C.registerPlugin==='function'?C.registerPlugin('SaveFile'):null);
+      if(sv&&typeof sv.setBlackout==='function') sv.setBlackout({on:!!on}).catch(function(){}); }catch(_){}
+  }
   function wake(e){
     if(e)stop(e);
     if(!ov||ov.style.display==='none'||ov.dataset.waking)return;
     ov.dataset.waking='1';ov.style.background='transparent';        // l'écran réapparaît tout de suite
+    nativeBO(false);
     clearTimeout(hideT);hideT=setTimeout(function(){ov.style.display='none';delete ov.dataset.waking;},450);   // puis on libère (évite le clic fantôme)
     arm();
   }
@@ -11729,16 +11743,17 @@ html body .fixed-nav-bar #navRecordsBadge,html body .fixed-nav-bar #navControlBa
     if(!ov)build();
     ov.dataset.waking='';delete ov.dataset.waking;clearTimeout(hideT);
     ov.style.background='#000';ov.style.display='block';
+    nativeBO(true);   /* V421 : barres système masquées + rétro-éclairage au minimum (APK) */
   }
   function arm(){clearTimeout(timer);timer=null;if(enabled()&&document.visibilityState==='visible')timer=setTimeout(fire,DELAY);}
   function activity(){if(ov&&ov.style.display==='block')return;arm();}
   ['pointerdown','pointermove','touchstart','touchmove','keydown','input','scroll','click'].forEach(function(t){document.addEventListener(t,activity,{capture:true,passive:true});});
-  document.addEventListener('visibilitychange',arm);
+  document.addEventListener('visibilitychange',function(){ if(document.visibilityState!=='visible'){ nativeBO(false); if(ov&&ov.style.display==='block'){ ov.style.display='none'; } } arm(); });
   function label(){return '🌑 Écran noir après 15 s : '+(enabled()?'ACTIVÉ':'désactivé');}
   window.v174ToggleBlackout=function(){
     try{localStorage.setItem(KEY,enabled()?'0':'1');}catch(_){}
     var b=document.getElementById('v174BlackBtn');if(b)b.textContent=label();
-    if(!enabled()){clearTimeout(timer);timer=null;if(ov)ov.style.display='none';}else arm();
+    if(!enabled()){clearTimeout(timer);timer=null;if(ov)ov.style.display='none';nativeBO(false);}else arm();
     showToast(enabled()?'Écran noir activé : après 15 s sans toucher (le téléphone reste allumé).':'Écran noir désactivé.','info');
     closeEntrySideMenu();
   };
@@ -12179,7 +12194,7 @@ html body.v176-hide-prev.v176-hide-prev #entryPage .entry-previous-box{display:n
    Bouton « Vérifier les mises à jour » dans le menu de la tournée. */
 (function(){
   var busy=false;
-  var BUILD_CODE='V420-VIDEO-NATIVE-2026-11-22'; // change ce texte à chaque nouvelle version envoyée, pour vérifier visuellement qu'elle est bien chargée
+  var BUILD_CODE='V421-FIXES-2026-11-23'; // change ce texte à chaque nouvelle version envoyée, pour vérifier visuellement qu'elle est bien chargée
   function say(m,t){ try{ showToast(m,t||'info'); }catch(_){ } }
   window.v210CheckUpdate=function(){
     if(busy) return;
@@ -15374,7 +15389,7 @@ html body #entryPage.v296 .v296-comp .v296-send{width:68px!important;height:68px
 /* V303 — compteur « appelé » hors séquence (recherche, liste, carte, voisins…) : dès qu'on y enregistre un index
    (ou une position GPS) il prend sa place juste après le dernier compteur où l'on était, et l'ordre est sauvegardé. */
 (function(){
-  var last=null, pending=null, busy=0, navTs=0, placing=false;
+  var last=null, pending=null, busy=0, navTs=0, placing=false, active=false;  /* V421 : active = l'agent a réellement travaillé (suivant/précédent) depuis l'ouverture de l'appli */
   function sortByIdx(a,b){return (Number.isFinite(a.sortIndex)?a.sortIndex:1e9)-(Number.isFinite(b.sortIndex)?b.sortIndex:1e9);}
   function grouped(){try{return typeof v231IsGrouped==='function'&&v231IsGrouped();}catch(_){return false;}}
   function cur(){try{return Array.isArray(filteredMeters)?filteredMeters[currentIndex]||null:null;}catch(_){return null;}}
@@ -15406,7 +15421,7 @@ html body #entryPage.v296 .v296-comp .v296-send{width:68px!important;height:68px
   function wrap(name){
     var orig=window[name]; if(typeof orig!=='function'||orig._v303) return;
     var w=async function(){
-      busy++;
+      busy++; active=true;
       try{
         var m=cur();
         if(m&&ready(m)){ try{saveCurrentInputs();}catch(_){} var was=(window.__v304Open&&window.__v304Open.has(m))?window.__v304Open.get(m):undefined, mid=m.meter; await place();
@@ -15422,7 +15437,8 @@ html body #entryPage.v296 .v296-comp .v296-send{width:68px!important;height:68px
     if(c!==last){
       if(last&&c&&c.type===last.type&&Date.now()-navTs>700&&!grouped()){
         var li=filteredMeters.indexOf(last), ci=filteredMeters.indexOf(c), adjacent=li>=0&&Math.abs(ci-li)===1;
-        if(!adjacent){
+        if(!adjacent && !active){ pending=null; }   /* V421 : au démarrage, le compteur affiché n'est qu'un reste de la session précédente : on ne place rien par rapport à lui */
+        else if(!adjacent){
           var anchor=(pending&&pending.meter===last)?pending.anchor:last;
           /* V410 : jamais de déplacement automatique d'une tournée vers une autre (recherche d'un compteur d'une autre tournée) */
           if(tourOf(anchor)!==tourOf(c)) pending=null;
@@ -15465,6 +15481,33 @@ html body #entryPage.v296 .v296-comp .v296-send{width:68px!important;height:68px
   }
   if(document.readyState==='loading') document.addEventListener('DOMContentLoaded',init); else init();
   window.v303Test={state:function(){return {pending:!!pending,last:last&&last.meter,anchor:pending&&pending.anchor&&pending.anchor.meter};}};
+})();
+</script>
+<script id="v421-inhabite">
+/* V421 — « 03-LOCAL INHABITE » : se comporte comme une lecture. Si un index est déjà saisi, il est gardé ; sinon l'ANCIEN index est copié
+   dans le champ ; puis passage automatique au compteur suivant (même chemin que la touche Entrée). */
+(function(){
+  var busy=false;
+  function init(){
+    var an=document.getElementById('anomalySelect'); if(!an||an.__v421) return; an.__v421=1;
+    an.addEventListener('change',async function(){
+      if(an.value!=='INHABITE'||busy) return; busy=true;
+      try{
+        var m=Array.isArray(filteredMeters)?filteredMeters[currentIndex]:null, inp=document.getElementById('newIndexInput');
+        if(!m||!inp) return;
+        var raw=String(inp.value==null?'':inp.value).trim();
+        var p=(m.prev===''||m.prev==null)?NaN:Number(m.prev);
+        if(raw===''&&isFinite(p)){ inp.value=String(p); try{ inp.dispatchEvent(new Event('input',{bubbles:true})); }catch(_){} }
+        await new Promise(function(r){ setTimeout(r,150); });
+        if(Array.isArray(filteredMeters)&&filteredMeters[currentIndex]!==m) return;   // l'agent a déjà changé de compteur
+        try{ showToast(raw===''&&isFinite(p)?'Local inhabité : ancien index conservé ('+p+').':'Local inhabité enregistré.','info'); }catch(_){}
+        await saveAndGoNext();
+      }catch(e){ console.error('v421',e); }
+      finally{ busy=false; }
+    });
+  }
+  if(document.readyState==='loading') document.addEventListener('DOMContentLoaded',init); else init();
+  setTimeout(init,1500);
 })();
 </script>
 <script id="v304-js">
@@ -16775,7 +16818,7 @@ if(document.readyState==='complete') setTimeout(init,0); else window.addEventLis
       +'<label style="display:flex;gap:10px;align-items:center;font-weight:700;margin-bottom:12px"><input id="ssExpected" type="checkbox" '+((window.SRPExpected&&!SRPExpected.on())?'':'checked')+' style="width:20px;height:20px"> Afficher l’« index attendu » (saisie)</label>'
       +'<label style="font-size:13px;font-weight:700">Alerte si la conso est au moins … fois la conso habituelle</label><input id="ssFactor" type="number" step="0.1" min="1" value="'+s.factor+'" style="'+inp+'">'
       +'<label style="font-size:13px;font-weight:700">…mais jamais en dessous de (m³)</label><input id="ssMin" type="number" step="1" min="0" value="'+s.minM3+'" style="'+inp+'">'
-      +'<label style="font-size:13px;font-weight:700">Nombre de mois d’historique utilisés</label><input id="ssWin" type="number" step="1" min="2" max="11" value="'+s.win+'" style="'+inp+'">'
+      +'<label style="font-size:13px;font-weight:700">Mois d’historique utilisés (0 = tout l’historique du compteur)</label><input id="ssWin" type="number" step="1" min="0" max="36" value="'+s.win+'" style="'+inp+'">'
       +'<label style="font-size:13px;font-weight:700">Seuil fixe (m³) — vide ou 0 = désactivé</label><input id="ssFixed" type="number" step="1" min="0" value="'+(s.fixed>0?s.fixed:'')+'" style="'+inp+'">'
       +'<div id="ssDiag" style="font-size:12px;line-height:1.5;background:#f1f5f9;color:#0f172a;border-radius:10px;padding:9px;margin-bottom:12px"></div>'
       +'<div style="font-size:12px;color:#64748b;margin-bottom:12px">Exemple : habituel 6, 3, 4 m³ (médiane 4). Avec ×2 et minimum 8 → alerte à partir de 8 m³. Sans historique (moins de 2 mois), seul le seuil fixe s’applique. Électricité : seuil inchangé.</div>'
@@ -16805,7 +16848,7 @@ if(document.readyState==='complete') setTimeout(init,0); else window.addEventLis
     $('ssReset').onclick=function(){ SRPSmart.reset(); close(); refreshAll(); toast('Réglages par défaut rétablis.','success'); };
     $('ssSave').onclick=function(){
       var f=Number($('ssFactor').value), mn=Number($('ssMin').value), w=Math.round(Number($('ssWin').value)), fx=Number($('ssFixed').value);
-      SRPSmart.set({smart:$('ssSmart').checked,factor:(isFinite(f)&&f>=1)?f:2,minM3:(isFinite(mn)&&mn>=0)?mn:8,win:(isFinite(w)&&w>=2&&w<=11)?w:4,fixed:(isFinite(fx)&&fx>0)?fx:0});
+      SRPSmart.set({smart:$('ssSmart').checked,factor:(isFinite(f)&&f>=1)?f:2,minM3:(isFinite(mn)&&mn>=0)?mn:8,win:(isFinite(w)&&w>=0&&w<=36)?w:0,fixed:(isFinite(fx)&&fx>0)?fx:0});
       try{ if(window.SRPExpected&&$('ssExpected')) SRPExpected.setOn($('ssExpected').checked); }catch(_){}
       close(); refreshAll(); toast('Alertes intelligentes enregistrées.','success');
     };
@@ -17331,7 +17374,7 @@ if(document.readyState==='complete') setTimeout(init,0); else window.addEventLis
   function expected(m){
     if(!m||m.type!=='EAU'||!window.SRPSmart) return null;
     var p=Number(m.prev); if(m.prev===''||m.prev==null||!isFinite(p)) return null;
-    var v=window.SRPSmart.recent(m); if(!v||v.length<2) return null;
+    var v=(window.SRPSmart.recentShort||window.SRPSmart.recent)(m); if(!v||v.length<2) return null;
     var base=median(v), lo=Math.min.apply(null,v), hi=Math.max.apply(null,v);
     return {idx:Math.round(p+base),lo:Math.round(p+lo),hi:Math.round(p+hi),base:base,src:v.src||'',n:v.length};
   }

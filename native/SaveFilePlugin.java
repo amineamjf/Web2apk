@@ -13,6 +13,9 @@ import android.os.Build;
 import android.os.Environment;
 import android.provider.MediaStore;
 import android.util.Base64;
+import android.view.View;
+import android.view.Window;
+import android.view.WindowManager;
 
 import com.getcapacitor.JSObject;
 import com.getcapacitor.Plugin;
@@ -282,6 +285,43 @@ public class SaveFilePlugin extends Plugin {
         res.put("name", name);
         res.put("size", size);
         call.resolve(res);
+    }
+
+    /**
+     * V421 — « Écran noir » : masque les barres système (haut/bas) et met le rétro-éclairage au minimum ;
+     * l'écran devient totalement noir mais l'appli reste active. on=false rétablit tout.
+     */
+    @PluginMethod
+    public void setBlackout(final PluginCall call) {
+        final boolean on = Boolean.TRUE.equals(call.getBoolean("on", false));
+        try {
+            getActivity().runOnUiThread(new Runnable() {
+                @Override
+                public void run() {
+                    try {
+                        Window w = getActivity().getWindow();
+                        WindowManager.LayoutParams lp = w.getAttributes();
+                        View dv = w.getDecorView();
+                        if (on) {
+                            lp.screenBrightness = 0f;
+                            dv.setSystemUiVisibility(View.SYSTEM_UI_FLAG_LAYOUT_STABLE
+                                    | View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION
+                                    | View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN
+                                    | View.SYSTEM_UI_FLAG_HIDE_NAVIGATION
+                                    | View.SYSTEM_UI_FLAG_FULLSCREEN
+                                    | View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY);
+                        } else {
+                            lp.screenBrightness = WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE;
+                            dv.setSystemUiVisibility(View.SYSTEM_UI_FLAG_VISIBLE);
+                        }
+                        w.setAttributes(lp);
+                    } catch (Exception ignored) { }
+                }
+            });
+            call.resolve();
+        } catch (Exception e) {
+            call.reject("blackout failed: " + e.getMessage());
+        }
     }
 
     @PluginMethod
