@@ -30,48 +30,81 @@
       function monthOf(m){ var d=(m&&m.readAt)?new Date(m.readAt):new Date(); if(isNaN(d.getTime())) d=new Date(); return d.getMonth(); }
       function median(a){ if(!a.length) return 0; var s=a.slice().sort(function(x,y){return x-y;}), n=s.length; return n%2?s[(n-1)/2]:(s[n/2-1]+s[n/2])/2; }
       function fmt(x){ return (Math.round(x*10)/10).toString().replace('.',','); }
-      // Consommations mensuelles récentes (du plus ancien au plus récent), à partir de m.history (index par mois) et m.prev.
-      function recentRaw(m){
-        var h=m&&m.history; if(!h) return [];
-        var prev=Number(m.prev), cur=monthOf(m), end=-1;
-        function raw(k){ var v=h[MONTHS[mod(k)]]; return (typeof v==='number'&&isFinite(v))?v:null; }
-        if(isFinite(prev)) for(var d=1;d<=12;d++){ if(raw(cur-d)===prev){ end=mod(cur-d); break; } }
-        if(end<0) end=mod(cur-1);
-        function ix(k){ var v=raw(k); if(v===null && mod(k)===end && isFinite(prev)) return prev; return v; }
-        var vals=[], LIM=(S.win>0&&S.win<11)?S.win:11;   /* V421 : jusqu'à 11 consommations de l'année en cours */
-        for(var i=0;i<LIM;i++){ var a=ix(end-i), b=ix(end-i-1); if(a===null||b===null) break; var c=a-b; if(c<0) break; vals.unshift(c); }
-        return vals;
+      /* V423 — HISTORIQUE INTELLIGENT. Pour chaque compteur :
+         1) relevés d'index DATÉS (historique 2026 + archive 2024-2025 v2) ; relevés ABERRANTS isolés ignorés (840 → 5000 → 850) ;
+         2) consommations mensuelles ; mois anormaux (fuite : 8, 9, 50, 30…) écartés de l'estimation ;
+         3) estimation « habituelle » = médiane pondérée par la proximité de SAISON du mois lu (été ≠ hiver) ;
+         4) changement de compteur (index qui baisse) ignoré. Réglage « mois utilisés » > 0 = ne garder que les N derniers mois. */
+      function refE(m){ var d=(m&&m.readAt)?new Date(m.readAt):new Date(); if(isNaN(d.getTime())) d=new Date(); return d.getFullYear()*12+d.getMonth(); }
+      function monIdx(n){ var i=MONTHS.indexOf(n); if(i>=0) return i; return ({'Aout':7,'Fevrier':1,'Decembre':11})[n]!==undefined?({'Aout':7,'Fevrier':1,'Decembre':11})[n]:-1; }
+      function readings(m,rE){
+        var h=(m&&m.history)||{}, map={}, rM=((rE%12)+12)%12, rY=Math.floor(rE/12);
+        Object.keys(h).forEach(function(k){
+          var v=h[k]; if(typeof v!=='number'||!isFinite(v)) return;
+          var mt=String(k).match(/^\s*(\S+)\s+(\d{4})\s*$/), mi, y;
+          if(mt){ mi=monIdx(mt[1]); y=+mt[2]; } else { mi=monIdx(String(k).trim()); y=(mi>=rM)?rY-1:rY; }
+          if(mi<0) return; var e=y*12+mi; if(e>=rE) return;
+          if(!(e in map) || /\d{4}/.test(k)) map[e]=v;
+        });
+        var p=Number(m&&m.prev); if(m&&m.prev!==''&&m.prev!=null&&isFinite(p)&&!((rE-1) in map)) map[rE-1]=p;
+        return Object.keys(map).map(function(e){return {e:+e,v:map[e]};}).sort(function(a,b){return a.e-b.e;});
       }
-      /* V414/V421 : historique COMPLET du compteur = archive (2024-2025) + 2026 (jusqu'à 11 mois), du plus ancien au plus récent.
-         Chaque compteur utilise tout ce qu'il possède (été ET hiver) ; réglage « mois utilisés » > 0 = ne garder que les N derniers. */
-      function archiveOf(m){
-        try{ var A=window.SRP_ARCHIVE&&window.SRP_ARCHIVE.m&&window.SRP_ARCHIVE.m[String(m&&m.meter||'')]; return Array.isArray(A)?A.filter(function(x){return typeof x==='number'&&isFinite(x)&&x>=0;}):[]; }catch(_){ return []; }
+      function cleanReadings(r){
+        var out=r.slice(), changed=true, guard=0;
+        while(changed&&guard++<5){ changed=false;
+          for(var i=1;i<out.length-1;i++){ var a=out[i-1].v,b=out[i].v,c=out[i+1].v;
+            if((b>a&&b>c&&a<=c)||(b<a&&c>=a)){ out.splice(i,1); changed=true; break; } }
+        }
+        return out;
+      }
+      function monthly(m,rE){
+        var r=cleanReadings(readings(m,rE)), out=[];
+        for(var i=1;i<r.length;i++){ var g=r[i].e-r[i-1].e, d=r[i].v-r[i-1].v; if(g<1||g>3||d<0) continue;
+          for(var k=0;k<g;k++) out.push({e:r[i-1].e+1+k,c:d/g,gap:g>1}); }
+        return out;
+      }
+      function archiveSeries(m){
+        try{ var R=window.SRP_ARCHIVE; if(!R||R.v!==2||!R.m) return []; var A=R.m[String(m&&m.meter||'')]; if(!Array.isArray(A)||A.length<2) return [];
+          var out=[]; for(var i=1;i<A.length;i++){ if(typeof A[i]==='number'&&isFinite(A[i])&&A[i]>=0) out.push({e:A[0]+i-1,c:A[i]}); } return out; }catch(_){ return []; }
+      }
+      function wmedian(it){ var s=it.slice().sort(function(a,b){return a.c-b.c;}), tot=0; s.forEach(function(x){tot+=x.w;}); var acc=0; for(var i=0;i<s.length;i++){ acc+=s[i].w; if(acc>=tot/2) return s[i].c; } return s.length?s[s.length-1].c:0; }
+      function dropOut(vals){
+        if(vals.length<4) return vals.slice();
+        var md=median(vals), mad=median(vals.map(function(x){return Math.abs(x-md);})), sg=Math.max(1.4826*mad,0.25*md,2), hi=md+2.5*sg;
+        var f=vals.filter(function(x){return x<=hi;}); return f.length>=3?f:vals.slice();
       }
       function recent(m){
-        var cur=recentRaw(m), A=archiveOf(m), v=A.concat(cur);
-        if(S.win>0) v=v.slice(-S.win);
-        v.src=A.length?(cur.length?'mix':'archive'):'';
+        var rE=refE(m), s=monthly(m,rE), hist=s.length, have={};
+        s.forEach(function(x){have[x.e]=1;});
+        archiveSeries(m).forEach(function(x){ if(!have[x.e]&&x.e<rE) s.push(x); });
+        s.sort(function(a,b){return a.e-b.e;});
+        if(S.win>0) s=s.slice(-S.win); else if(s.length>36) s=s.slice(-36);
+        var vals=s.map(function(x){return x.c;}), keep=dropOut(vals), hi=keep.length<vals.length?Math.max.apply(null,keep):Infinity;
+        var tm=((rE%12)+12)%12, items=[];
+        s.forEach(function(x){
+          if(x.c>hi) return;
+          var d=Math.abs((((x.e%12)+12)%12)-tm); d=Math.min(d,12-d);
+          var w=Math.max(0.05,Math.exp(-(d*d)/(2*1.5*1.5))); if(x.gap) w*=0.6; items.push({c:x.c,w:w});
+        });
+        var v=items.map(function(x){return Math.round(x.c*10)/10;});
+        v.base=items.length?wmedian(items):0; v.dropped=vals.length-items.length; v.all=vals;
+        v.src=(s.length&&hist<s.length)?(hist?'mix':'archive'):'';
         return v;
       }
-      /* ancien comportement (4 derniers mois, archive en secours) — utilisé par « Index attendu » (précision à court terme) */
-      function recentShort(m){
-        var v=recentRaw(m); if(v.length>4) v=v.slice(-4);
-        if(v.length<S.minHist){ var A=archiveOf(m); if(A.length>=S.minHist){ v=A.slice(-4); v.src='archive'; } }
-        return v;
-      }
+      var recentShort=recent;
       function ev(m,c){
         if(!m||m.type!=='EAU'||typeof c!=='number'||!isFinite(c)||c<=0) return null;
         if(S.fixed>0 && c>S.fixed) return {kind:'fixed'};
         if(!S.smart) return null;
         var v=recent(m); if(v.length<S.minHist) return null;
-        var base=median(v), thr=Math.max(S.minM3,S.factor*base);
-        if(c>=thr) return {kind:'smart',base:base,vals:v,thr:thr,src:v.src||''};
+        var base=v.base, thr=Math.max(S.minM3,S.factor*base);
+        if(c>=thr) return {kind:'smart',base:base,vals:v,thr:thr,src:v.src||'',dropped:v.dropped||0};
         return null;
       }
       function why(m,c){
         var r=ev(m,c); if(!r) return '';
         if(r.kind==='fixed') return 'Au-dessus du seuil fixe ('+fmt(S.fixed)+' m³).';
-        var t='Habituellement ~ '+fmt(r.base)+' m³/mois ('+(r.src==='archive'?'archive 2025 : ':(r.src==='mix'?'tout l’historique : ':'derniers mois : '))+r.vals.map(fmt).join(', ')+')';
+        var t='Habituellement ~ '+fmt(r.base)+' m³/mois à cette saison (sur '+r.vals.length+' mois'+(r.dropped?', '+r.dropped+' mois anormal'+(r.dropped>1?'s':'')+' écarté'+(r.dropped>1?'s':''):'')+')';
         if(r.base>0) t+=' — ce relevé = ×'+fmt(c/r.base);
         return t+'.';
       }
@@ -12194,7 +12227,7 @@ html body.v176-hide-prev.v176-hide-prev #entryPage .entry-previous-box{display:n
    Bouton « Vérifier les mises à jour » dans le menu de la tournée. */
 (function(){
   var busy=false;
-  var BUILD_CODE='V422-HISTO-AUTO-2026-11-23'; // change ce texte à chaque nouvelle version envoyée, pour vérifier visuellement qu'elle est bien chargée
+  var BUILD_CODE='V423-SAISON-2026-11-24'; // change ce texte à chaque nouvelle version envoyée, pour vérifier visuellement qu'elle est bien chargée
   function say(m,t){ try{ showToast(m,t||'info'); }catch(_){ } }
   window.v210CheckUpdate=function(){
     if(busy) return;
@@ -15483,6 +15516,35 @@ html body #entryPage.v296 .v296-comp .v296-send{width:68px!important;height:68px
   window.v303Test={state:function(){return {pending:!!pending,last:last&&last.meter,anchor:pending&&pending.anchor&&pending.anchor.meter};}};
 })();
 </script>
+<script id="v423-gpsdot">
+/* V423 — GPS non disponible / non activé : plus de message à chaque compteur. Une petite pastille ORANGE 📍 apparaît
+   (et disparaît seule quand le GPS refonctionne). Les confirmations (position enregistrée) et les vrais échecs d'enregistrement restent affichés. */
+(function(){
+  var dot=null, hideT=null;
+  function mk(){
+    if(dot) return dot;
+    dot=document.createElement('div'); dot.id='srpGpsDot'; dot.textContent='📍';
+    dot.style.cssText='position:fixed;right:10px;bottom:calc(92px + env(safe-area-inset-bottom,0px));z-index:56;width:30px;height:30px;border-radius:50%;background:#f97316;color:#fff;display:none;align-items:center;justify-content:center;font-size:15px;box-shadow:0 2px 8px rgba(0,0,0,.3);opacity:.95';
+    dot.title='GPS non activé ou sans signal';
+    dot.onclick=function(){ try{ showToast('GPS non activé ou sans signal : activez la localisation du téléphone.','info'); }catch(_){} };
+    document.body.appendChild(dot); return dot;
+  }
+  function warn(){
+    try{ var d=mk(); d.style.display='flex'; clearTimeout(hideT); hideT=setTimeout(function(){ d.style.display='none'; },25000); }catch(_){}
+  }
+  function install(){
+    var o=window.flashGpsSavedBadge; if(typeof o!=='function'||o._v423) return false;
+    var w=function(ok,text){
+      if(!ok && /^\s*⚠️/.test(String(text||'')) && !/chec/i.test(String(text||''))){ warn(); return; }
+      if(ok){ try{ if(dot){ dot.style.display='none'; clearTimeout(hideT); } }catch(_){} }
+      return o.apply(this,arguments);
+    };
+    w._v423=true; window.flashGpsSavedBadge=w; try{ flashGpsSavedBadge=w; }catch(_){} return true;
+  }
+  function go(){ if(!install()) setTimeout(go,300); }
+  if(document.readyState==='loading') document.addEventListener('DOMContentLoaded',go); else go();
+})();
+</script>
 <script id="v421-inhabite">
 /* V421 — « 03-LOCAL INHABITE » : se comporte comme une lecture. Si un index est déjà saisi, il est gardé ; sinon l'ANCIEN index est copié
    dans le champ ; puis passage automatique au compteur suivant (même chemin que la touche Entrée). */
@@ -16837,8 +16899,8 @@ if(document.readyState==='complete') setTimeout(init,0); else window.addEventLis
           var t='<b>Compteur '+(dm.meter||'')+'</b><br>Ancien index : '+(dm.prev===''||dm.prev==null?'—':dm.prev)+'<br>Historique : '+hl+'<br>';
           if(!cf.smart) t+='⚠️ Détection par historique <b>désactivée</b> : seul le seuil fixe'+(cf.fixed>0?' ('+cf.fixed+' m³)':' (aucun)')+' s’applique.';
           else if(rv.length<cf.minHist) t+='⚠️ Pas assez d’historique ('+rv.length+' conso mensuelle'+(rv.length>1?'s':'')+' exploitable'+(rv.length>1?'s':'')+', il en faut '+cf.minHist+') : <b>aucune alerte intelligente</b> pour ce compteur, seul le seuil fixe'+(cf.fixed>0?' ('+cf.fixed+' m³)':' (aucun)')+' s’applique.';
-          else{ var sr=rv.slice().sort(function(a,b){return a-b;}),n=sr.length,md2=n%2?sr[(n-1)/2]:(sr[n/2-1]+sr[n/2])/2,th=Math.max(cf.minM3,cf.factor*md2);
-            t+='Conso mensuelles'+(rv.src==='archive'?' (base : archive 2025)':'')+' : '+rv.map(SRPSmart.fmt).join(', ')+' m³ (habituel ≈ '+SRPSmart.fmt(md2)+')<br>✅ Alerte dès <b>'+SRPSmart.fmt(th)+' m³</b>'+(cf.fixed>0?' (ou plus de '+cf.fixed+' m³)':'')+'.'; }
+          else{ var sr=rv.slice().sort(function(a,b){return a-b;}),n=sr.length,md2=(rv.base!==undefined?rv.base:(n%2?sr[(n-1)/2]:(sr[n/2-1]+sr[n/2])/2)),th=Math.max(cf.minM3,cf.factor*md2);
+            t+='Conso mensuelles'+(rv.src==='archive'?' (base : archive 2024-2025)':'')+(rv.dropped?' ('+rv.dropped+' mois anormal(aux) écarté(s))':'')+' : '+rv.map(SRPSmart.fmt).join(', ')+' m³ (habituel ≈ '+SRPSmart.fmt(md2)+')<br>✅ Alerte dès <b>'+SRPSmart.fmt(th)+' m³</b>'+(cf.fixed>0?' (ou plus de '+cf.fixed+' m³)':'')+'.'; }
           dg.innerHTML=t;
         }
       }
@@ -17377,7 +17439,7 @@ if(document.readyState==='complete') setTimeout(init,0); else window.addEventLis
     if(!m||m.type!=='EAU'||!window.SRPSmart) return null;
     var p=Number(m.prev); if(m.prev===''||m.prev==null||!isFinite(p)) return null;
     var v=(window.SRPSmart.recentShort||window.SRPSmart.recent)(m); if(!v||v.length<2) return null;
-    var base=median(v), lo=Math.min.apply(null,v), hi=Math.max.apply(null,v);
+    var base=(v.base!==undefined?v.base:median(v)), lo=Math.min.apply(null,v), hi=Math.max.apply(null,v);
     return {idx:Math.round(p+base),lo:Math.round(p+lo),hi:Math.round(p+hi),base:base,src:v.src||'',n:v.length};
   }
   function mk(){
