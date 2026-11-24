@@ -12227,7 +12227,7 @@ html body.v176-hide-prev.v176-hide-prev #entryPage .entry-previous-box{display:n
    Bouton « Vérifier les mises à jour » dans le menu de la tournée. */
 (function(){
   var busy=false;
-  var BUILD_CODE='V423-SAISON-2026-11-24'; // change ce texte à chaque nouvelle version envoyée, pour vérifier visuellement qu'elle est bien chargée
+  var BUILD_CODE='V424-PLACE-2026-11-24'; // change ce texte à chaque nouvelle version envoyée, pour vérifier visuellement qu'elle est bien chargée
   function say(m,t){ try{ showToast(m,t||'info'); }catch(_){ } }
   window.v210CheckUpdate=function(){
     if(busy) return;
@@ -15430,12 +15430,24 @@ html body #entryPage.v296 .v296-comp .v296-send{width:68px!important;height:68px
   function typed(){var i=document.getElementById('newIndexInput');return !!i&&String(i.value||'').trim()!=='';}
   function toast(t,k){try{showToast(t,k||'success');}catch(_){}}
 
+  /* V422 : repère de placement. Si le compteur où l'on s'était arrêté (anchor) n'est PAS encore lu, le compteur appelé se place JUSTE AVANT lui
+     (après son prédécesseur) : après la lecture, « Suivant » ramène à l'arrêt (non lu) au lieu de le sauter. Anchor déjà lu => juste après lui. */
+  function refFor(m, anchor){
+    try{
+      if(hasRead(anchor)) return anchor;
+      var order=allMetersData.slice().sort(sortByIdx), ia=order.indexOf(anchor);
+      if(ia>0){ var pr=order[ia-1]; if(pr===m) return pr; if(tourOf(pr)===tourOf(m)) return pr; }
+    }catch(_){}
+    return anchor;
+  }
   async function place(){
     /* V403 : déplacement automatique RÉACTIVÉ (code d'origine V303) — « 📍 Confirmer la place » (menu ✏️) reste disponible, inchangé. */
     var p=pending; if(!p||placing) return; pending=null; placing=true;
     try{
       var m=p.meter, ref=p.anchor;
-      if(m&&ref&&tourOf(m)!==tourOf(ref)) return;   /* V410 : garde-fou : jamais entre deux tournées */
+      if(m&&ref&&tourOf(m)!==tourOf(ref)) return;
+      ref=refFor(m,ref);
+      if(ref===m) return;   // déjà juste avant le compteur d'arrêt   /* V410 : garde-fou : jamais entre deux tournées */
       if(grouped()||!m||!ref||m===ref||allMetersData.indexOf(m)<0||allMetersData.indexOf(ref)<0||!window.v290Test) return;
       var order=allMetersData.slice().sort(sortByIdx), im=order.indexOf(m), ir=order.indexOf(ref);
       if(im===ir+1) return;                      // déjà à sa place
@@ -15493,8 +15505,8 @@ html body #entryPage.v296 .v296-comp .v296-send{width:68px!important;height:68px
       if(!p||p.meter!==m||!p.anchor||p.anchor===m||allMetersData.indexOf(m)<0||allMetersData.indexOf(p.anchor)<0||!window.v290Test){
         toast('Aucune place à confirmer : ce compteur n’a pas été appelé depuis un autre compteur.','warn'); return;
       }
-      var ref=p.anchor, order=allMetersData.slice().sort(sortByIdx);
-      if(order.indexOf(m)===order.indexOf(ref)+1){ pending=null; toast('Ce compteur est déjà à sa place (après '+(ref.meter||'')+').','success'); return; }
+      var ref=refFor(m,p.anchor), order=allMetersData.slice().sort(sortByIdx);
+      if(ref===m||order.indexOf(m)===order.indexOf(ref)+1){ pending=null; toast('Ce compteur est déjà à sa place.','success'); return; }
       var tm=tourOf(m), tr=tourOf(ref);
       if(tm!==tr){
         if(!confirm('⚠️ Tournées différentes\n\nLe compteur '+(m.meter||'')+' appartient à la tournée « '+(tm||'—')+' ».\nVous voulez le placer après le compteur '+(ref.meter||'')+' de la tournée « '+(tr||'—')+' ».\n\nConfirmer le changement de place ?')) return;
