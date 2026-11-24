@@ -1,5 +1,9 @@
 name: Xlsx check
-on: workflow_dispatch
+on:
+  workflow_dispatch:
+  push:
+    branches: [feat/smart-import]
+    paths: ['tests/xlsxcheck.*', '.github/workflows/xlsx-check.yml']
 jobs:
   check:
     runs-on: ubuntu-latest
