@@ -28,5 +28,7 @@ for n in sorted(z.namelist()):
             xml.sax.parse(io.BytesIO(z.read(n)), xml.sax.ContentHandler())
         except Exception as e:
             bad += 1; print('SAX ECHEC', n, e)
+for n in ['xl/worksheets/sheet2.xml']:
+    print('HEAD', n, z.read(n)[:700].decode('utf-8','replace'))
 print('RESULTAT:', 'PROBLEMES=%d' % bad)
 sys.exit(1 if bad else 0)

@@ -15,8 +15,8 @@ const fs = require('fs'), path = require('path');
     const ans = ['RAS','INHABITE','INACCESSIBLE','BLOQUE','ILLISIBLE','COMPTEUR_POSE_ENVERS','FUITE_ABONNE','COMPTEUR_CHANGE'];
     const D = [];
     for (let i = 1; i <= 60; i++) {
-      D.push({ contract: 'C' + i, meter: '4S2A18' + String(1000 + i), name: i % 7 === 0 ? 'ÉLOÏSE & O\'BRIEN <test> "q"' : (i % 5 === 0 ? 'محمد العلوي' : 'CLIENT ' + i),
-        address: 'RUE ' + i + ' N°' + i, tour: i % 2 ? 'BO-UR 4YK0EP26' : 'BO-UR 4YK0EP25', prev: 100 + i, current: i % 3 === 0 ? '' : 110 + i,
+      D.push({ contract: 'C' + i, meter: '4S2A18' + String(1000 + i), name: i === 11 ? 'CTRL\u0001X\u000bY\u001fZ\ufffeW' : i === 13 ? 'EMOJI \ud83d\udd00 OK' : i === 17 ? 'LONE\ud800SURR' : i === 19 ? 'NUL\u0000X' : i === 23 ? 'TAB\tNL\nCR\rEND' : i % 7 === 0 ? 'ÉLOÏSE & O\'BRIEN <test> "q"' : (i % 5 === 0 ? 'محمد العلوي' : 'CLIENT ' + i),
+        address: i === 29 ? 'ADR \u0008 \u000c \u001b' : 'RUE ' + i + ' N°' + i, tour: i % 2 ? 'BO-UR 4YK0EP26' : 'BO-UR 4YK0EP25', prev: 100 + i, current: i % 3 === 0 ? '' : 110 + i,
         read: i % 3 !== 0, anomaly: ans[i % ans.length], annotation: i % 4 === 0 ? 'Porte fermée' : 'Aucune', type: i % 10 === 0 ? 'ELEC' : 'EAU',
         photo: '', gps: i % 2 ? '34.2,-6.58' : '', history: { 'Octobre': 100 + i, 'Septembre': 95 + i, 'Novembre 2024': 50 + i },
         sortIndex: i - 1, readAt: '2026-11-18T09:00:00.000Z', phone: '0600000' + i, replacedFrom: i % 6 === 0 ? 'OLD' + i : '', added: i % 9 === 0, reordered: i % 8 === 0, v290Prev: null });
