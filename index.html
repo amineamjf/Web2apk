@@ -12227,7 +12227,7 @@ html body.v176-hide-prev.v176-hide-prev #entryPage .entry-previous-box{display:n
    Bouton « Vérifier les mises à jour » dans le menu de la tournée. */
 (function(){
   var busy=false;
-  var BUILD_CODE='V424-PLACE-2026-11-24'; // change ce texte à chaque nouvelle version envoyée, pour vérifier visuellement qu'elle est bien chargée
+  var BUILD_CODE='V425-XMLSAFE-2026-11-24'; // change ce texte à chaque nouvelle version envoyée, pour vérifier visuellement qu'elle est bien chargée
   function say(m,t){ try{ showToast(m,t||'info'); }catch(_){ } }
   window.v210CheckUpdate=function(){
     if(busy) return;
@@ -17271,7 +17271,8 @@ if(document.readyState==='complete') setTimeout(init,0); else window.addEventLis
   }
 
   /* ----- graphiques natifs (anneau + barres) injectés dans le .xlsx ----- */
-  function esc(s){ return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+  function xmlClean(t){ return String(t).replace(/[\ud800-\udbff](?![\udc00-\udfff])|(?:[^\ud800-\udbff]|^)[\udc00-\udfff]/g,function(m){return m.length>1?m.charAt(0):'';}).replace(/[\x00-\x08\x0b\x0c\x0e-\x1f\ufffe\uffff]/g,''); }
+  function esc(s){ return xmlClean(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
   function strCache(a){ return '<c:strCache><c:ptCount val="'+a.length+'"/>'+a.map(function(v,i){return '<c:pt idx="'+i+'"><c:v>'+esc(v)+'</c:v></c:pt>';}).join('')+'</c:strCache>'; }
   function numCache(a,f){ return '<c:numCache><c:formatCode>'+(f||'General')+'</c:formatCode><c:ptCount val="'+a.length+'"/>'+a.map(function(v,i){return (v===null||v==='')?'':'<c:pt idx="'+i+'"><c:v>'+v+'</c:v></c:pt>';}).join('')+'</c:numCache>'; }
   var NS='xmlns:c="http://schemas.openxmlformats.org/drawingml/2006/chart" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"';
@@ -17359,6 +17360,7 @@ if(document.readyState==='complete') setTimeout(init,0); else window.addEventLis
   };
   // Octets du .xlsx avec graphiques ; en cas de problème : fichier sans graphiques (jamais d'échec d'export)
   window.SRPXlsxBytes=async function(wb){
+    try{ Object.keys(wb.Sheets||{}).forEach(function(n){ var ws=wb.Sheets[n]; Object.keys(ws).forEach(function(k){ if(k[0]==='!')return; var c=ws[k]; if(c&&typeof c.v==='string'){ var t=xmlClean(c.v); if(t!==c.v){ c.v=t; if(c.w!=null) c.w=t; } } }); }); }catch(e){ console.warn('V425 nettoyage XML',e); }
     var u8=XLSX.write(wb,{bookType:'xlsx',type:'array'});
     try{ if(wb&&wb.__srp&&typeof JSZip!=='undefined') return await inject(u8 instanceof Uint8Array?u8:new Uint8Array(u8),wb.__srp); }
     catch(e){ console.warn('V406 graphiques non ajoutés :',e); }
