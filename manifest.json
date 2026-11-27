@@ -1,4 +1,5 @@
 {
+  "orientation": "portrait",
   "name": "Smart RV",
   "short_name": "Smart RV",
   "start_url": "./index.html",

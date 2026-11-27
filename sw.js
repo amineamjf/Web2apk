@@ -6,7 +6,7 @@ const CACHE = 'smartrv-cache-v61';
 // Dans l'APK (Capacitor), les fichiers de l'app sont locaux : on les lit TOUJOURS en premier depuis l'APK,
 // sinon une mise à jour installée par-dessus l'ancienne version resterait bloquée sur l'ancien index.html en cache.
 const NATIVE = self.location.hostname === 'localhost';
-const CORE = ['./', './index.html', './manifest.json', './icon-192.png', './icon-512.png', './android-bridge.js', './cloud-sync.js', './sidikacem-map.json'];
+const CORE = ['./', './index.html', './manifest.json', './icon-192.png', './icon-512.png', './android-bridge.js', './cloud-sync.js', './archive-conso.js', './sidikacem-map.json'];
 const CDN = [
   'https://cdn.jsdelivr.net/npm/xlsx-js-style@1.2.0/dist/xlsx.bundle.js',
   'https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js',
